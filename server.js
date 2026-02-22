@@ -1,6 +1,7 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
+const { Pool } = require("pg");
 
 const app = express();
 app.use(express.json());
@@ -8,7 +9,13 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const SECRET = "superbett_secret_key";
 
-// Usuario demo
+// -------- CONEXIÓN POSTGRES --------
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
+
+// -------- USUARIO DEMO --------
 const usuarioDemo = {
   id: 1,
   username: "admin",
@@ -38,14 +45,30 @@ app.post("/login", async (req, res) => {
   res.json({ token });
 });
 
-// -------- DEBUG --------
+// -------- DEBUG HEADER --------
 app.get("/debug", (req, res) => {
   res.json({
     authorizationHeader: req.headers.authorization || null
   });
 });
 
-// -------- MIDDLEWARE --------
+// -------- TEST DB --------
+app.get("/db-test", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT NOW()");
+    res.json({
+      conectado: true,
+      servidor: result.rows[0]
+    });
+  } catch (error) {
+    res.status(500).json({
+      conectado: false,
+      error: error.message
+    });
+  }
+});
+
+// -------- MIDDLEWARE TOKEN --------
 function verificarToken(req, res, next) {
   const authHeader = req.headers.authorization;
 
@@ -64,7 +87,7 @@ function verificarToken(req, res, next) {
     req.usuario = decoded;
     next();
   } catch (err) {
-    return res.status(401).json({ error: err.message });
+    return res.status(401).json({ error: "Token inválido o expirado" });
   }
 }
 
