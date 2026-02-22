@@ -7,7 +7,7 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const SECRET = "superbett_secret_key";
+const SECRET = process.env.JWT_SECRET || "superbett_secret_key";
 
 // =============================
 // CONEXIÓN POSTGRES
@@ -20,62 +20,99 @@ const pool = new Pool({
 });
 
 // =============================
-// USUARIO DEMO
+// SETUP BASE DE DATOS (ejecutar 1 vez)
 // =============================
-const usuarioDemo = {
-  id: 1,
-  username: "admin",
-  password: bcrypt.hashSync("123456", 10)
-};
+app.get("/setup-db", async (req, res) => {
+  try {
+    await pool.query(`
+      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+      CREATE TABLE IF NOT EXISTS usuarios (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        username text NOT NULL UNIQUE,
+        password text NOT NULL,
+        nombre text NOT NULL,
+        rol text NOT NULL,
+        activo boolean NOT NULL DEFAULT true,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT rol_valido CHECK (
+          rol IN ('admin','central','vendedor','premios')
+        )
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_usuarios_username
+      ON usuarios(username);
+    `);
+
+    res.json({ ok: true, message: "Tabla usuarios lista" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // =============================
-// LOGIN
+// CREAR ADMIN INICIAL (1 vez)
+// =============================
+app.get("/crear-admin", async (req, res) => {
+  try {
+    const hash = await bcrypt.hash("123456", 10);
+
+    await pool.query(
+      `INSERT INTO usuarios (username, password, nombre, rol)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (username) DO NOTHING`,
+      ["admin", hash, "Administrador", "admin"]
+    );
+
+    res.json({ ok: true, message: "Admin creado o ya existe" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// =============================
+// LOGIN REAL
 // =============================
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
-  if (username !== usuarioDemo.username) {
-    return res.status(401).json({ error: "Usuario incorrecto" });
+  try {
+    const result = await pool.query(
+      "SELECT * FROM usuarios WHERE username = $1 AND activo = true",
+      [username]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: "Usuario no encontrado" });
+    }
+
+    const usuario = result.rows[0];
+
+    const passwordValido = await bcrypt.compare(password, usuario.password);
+
+    if (!passwordValido) {
+      return res.status(401).json({ error: "Contraseña incorrecta" });
+    }
+
+    const token = jwt.sign(
+      {
+        id: usuario.id,
+        rol: usuario.rol
+      },
+      SECRET,
+      { expiresIn: "1h" }
+    );
+
+    res.json({ token });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
-
-  const passwordValido = await bcrypt.compare(password, usuarioDemo.password);
-
-  if (!passwordValido) {
-    return res.status(401).json({ error: "Contraseña incorrecta" });
-  }
-
-  const token = jwt.sign(
-    { id: usuarioDemo.id, username: usuarioDemo.username },
-    SECRET,
-    { expiresIn: "1h" }
-  );
-
-  res.json({ token });
 });
 
 // =============================
-// DEBUG HEADER
-// =============================
-app.get("/debug", (req, res) => {
-  res.json({
-    authorizationHeader: req.headers.authorization || null
-  });
-});
-
-// =============================
-// TEST VARIABLES DE ENTORNO
-// =============================
-app.get("/env-test", (req, res) => {
-  res.json({
-    databaseUrlExiste: !!process.env.DATABASE_URL,
-    databaseUrlLength: process.env.DATABASE_URL
-      ? process.env.DATABASE_URL.length
-      : 0
-  });
-});
-
-// =============================
-// TEST CONEXIÓN BD
+// TEST BD
 // =============================
 app.get("/db-test", async (req, res) => {
   try {
