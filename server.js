@@ -53,9 +53,8 @@ function verificarToken(req, res, next) {
     return res.status(401).json({ error: "Token requerido" });
   }
 
-  // Validar formato
   if (!authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Formato inválido. Debe ser Bearer <token>" });
+    return res.status(401).json({ error: "Formato inválido" });
   }
 
   const token = authHeader.substring(7).trim();
@@ -65,7 +64,7 @@ function verificarToken(req, res, next) {
     req.usuario = decoded;
     next();
   } catch (err) {
-    return res.status(401).json({ error: "Token inválido o expirado" });
+    return res.status(401).json({ error: err.message });
   }
 }
 
