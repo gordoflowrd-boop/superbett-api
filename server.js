@@ -9,20 +9,28 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const SECRET = "superbett_secret_key";
 
-// -------- CONEXIÓN POSTGRES --------
+// =============================
+// CONEXIÓN POSTGRES
+// =============================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: process.env.DATABASE_URL
+    ? { rejectUnauthorized: false }
+    : false
 });
 
-// -------- USUARIO DEMO --------
+// =============================
+// USUARIO DEMO
+// =============================
 const usuarioDemo = {
   id: 1,
   username: "admin",
   password: bcrypt.hashSync("123456", 10)
 };
 
-// -------- LOGIN --------
+// =============================
+// LOGIN
+// =============================
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
@@ -45,14 +53,30 @@ app.post("/login", async (req, res) => {
   res.json({ token });
 });
 
-// -------- DEBUG HEADER --------
+// =============================
+// DEBUG HEADER
+// =============================
 app.get("/debug", (req, res) => {
   res.json({
     authorizationHeader: req.headers.authorization || null
   });
 });
 
-// -------- TEST DB --------
+// =============================
+// TEST VARIABLES DE ENTORNO
+// =============================
+app.get("/env-test", (req, res) => {
+  res.json({
+    databaseUrlExiste: !!process.env.DATABASE_URL,
+    databaseUrlLength: process.env.DATABASE_URL
+      ? process.env.DATABASE_URL.length
+      : 0
+  });
+});
+
+// =============================
+// TEST CONEXIÓN BD
+// =============================
 app.get("/db-test", async (req, res) => {
   try {
     const result = await pool.query("SELECT NOW()");
@@ -68,7 +92,9 @@ app.get("/db-test", async (req, res) => {
   }
 });
 
-// -------- MIDDLEWARE TOKEN --------
+// =============================
+// MIDDLEWARE TOKEN
+// =============================
 function verificarToken(req, res, next) {
   const authHeader = req.headers.authorization;
 
@@ -91,7 +117,9 @@ function verificarToken(req, res, next) {
   }
 }
 
-// -------- RUTA PROTEGIDA --------
+// =============================
+// RUTA PROTEGIDA
+// =============================
 app.get("/perfil", verificarToken, (req, res) => {
   res.json({
     mensaje: "Ruta protegida",
