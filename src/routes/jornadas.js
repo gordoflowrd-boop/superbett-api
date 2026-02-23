@@ -1,0 +1,91 @@
+const express = require('express');
+const { query } = require('../db');
+const { authMiddleware, requireRol } = require('../middleware/auth');
+
+const router = express.Router();
+router.use(authMiddleware);
+
+// GET /api/jornadas/abiertas
+// Devuelve las jornadas disponibles para vender ahora mismo
+router.get('/abiertas', async (req, res) => {
+  try {
+    const result = await query('SELECT jornadas_abiertas($1)', [req.query.fecha || null]);
+    res.json(result.rows[0].jornadas_abiertas);
+  } catch (err) {
+    console.error('Error jornadas_abiertas:', err);
+    res.status(500).json({ error: 'Error al obtener jornadas' });
+  }
+});
+
+// GET /api/jornadas/incompletas  [admin]
+router.get('/incompletas', requireRol('admin', 'central'), async (req, res) => {
+  try {
+    const result = await query('SELECT jornadas_incompletas()');
+    res.json(result.rows[0].jornadas_incompletas);
+  } catch (err) {
+    console.error('Error jornadas_incompletas:', err);
+    res.status(500).json({ error: 'Error al obtener jornadas incompletas' });
+  }
+});
+
+// GET /api/jornadas?fecha=2026-02-23  [admin] — listado con estado
+router.get('/', requireRol('admin', 'central'), async (req, res) => {
+  const { fecha } = req.query;
+  try {
+    const result = await query(
+      `SELECT j.id, j.fecha, j.hora_inicio, j.hora_cierre, j.estado,
+              l.nombre AS loteria, l.zona_horaria,
+              COUNT(t.id) FILTER (WHERE t.anulado = false) AS total_tickets,
+              COALESCE(SUM(t.total_monto) FILTER (WHERE t.anulado = false), 0) AS total_venta,
+              p.q1, p.q2, p.q3, p.activo AS premio_activo
+       FROM jornadas j
+       JOIN loterias l ON l.id = j.loteria_id
+       LEFT JOIN tickets t ON t.jornada_id = j.id
+       LEFT JOIN premios p ON p.jornada_id = j.id
+       WHERE ($1::date IS NULL OR j.fecha = $1::date)
+       GROUP BY j.id, l.nombre, l.zona_horaria, p.q1, p.q2, p.q3, p.activo
+       ORDER BY j.fecha DESC, j.hora_inicio`,
+      [fecha || null]
+    );
+    res.json({ jornadas: result.rows });
+  } catch (err) {
+    console.error('Error listado jornadas:', err);
+    res.status(500).json({ error: 'Error al obtener jornadas' });
+  }
+});
+
+// POST /api/jornadas/generar  [admin]
+router.post('/generar', requireRol('admin'), async (req, res) => {
+  const { fecha } = req.body;
+  try {
+    const result = await query('SELECT generar_jornadas($1)', [fecha || null]);
+    res.json(result.rows[0].generar_jornadas);
+  } catch (err) {
+    console.error('Error generar_jornadas:', err);
+    res.status(500).json({ error: 'Error al generar jornadas' });
+  }
+});
+
+// POST /api/jornadas/:id/cerrar  [admin]
+router.post('/:id/cerrar', requireRol('admin', 'central'), async (req, res) => {
+  try {
+    const result = await query('SELECT cerrar_jornada($1)', [req.params.id]);
+    res.json(result.rows[0].cerrar_jornada);
+  } catch (err) {
+    console.error('Error cerrar_jornada:', err);
+    res.status(500).json({ error: 'Error al cerrar jornada' });
+  }
+});
+
+// POST /api/jornadas/:id/reabrir  [admin]
+router.post('/:id/reabrir', requireRol('admin'), async (req, res) => {
+  try {
+    const result = await query('SELECT reabrir_jornada($1)', [req.params.id]);
+    res.json(result.rows[0].reabrir_jornada);
+  } catch (err) {
+    console.error('Error reabrir_jornada:', err);
+    res.status(500).json({ error: 'Error al reabrir jornada' });
+  }
+});
+
+module.exports = router;
