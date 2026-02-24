@@ -51,27 +51,24 @@ router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async
   }
 
   try {
-    // 1. RESUMEN GENERAL (Optimizado con subconsultas para evitar duplicados por JOIN)
+    // 1. RESUMEN GENERAL
     const resumenQuery = await query(
       `SELECT
          COUNT(t.id) FILTER (WHERE t.anulado = false)                         AS total_tickets,
          COUNT(t.id) FILTER (WHERE t.anulado = true)                          AS tickets_anulados,
          COALESCE(SUM(t.total_monto) FILTER (WHERE t.anulado = false), 0)     AS total_venta,
-         -- Premios calculados de forma independiente para evitar duplicidad
          COALESCE((
            SELECT SUM(gl.monto) 
            FROM ganadores_loteria gl 
            JOIN tickets t2 ON t2.id = gl.ticket_id 
            WHERE t2.banca_id = $1 AND ($2::date IS NULL OR t2.fecha = $2)
          ), 0) AS total_premios,
-         -- Comisiones calculadas desde los detalles
          COALESCE((
            SELECT SUM(td2.comision_monto) 
            FROM ticket_detalles td2 
            JOIN tickets t3 ON t3.id = td2.ticket_id 
            WHERE t3.banca_id = $1 AND t3.anulado = false AND ($2::date IS NULL OR t3.fecha = $2)
          ), 0) AS total_comision,
-         -- Conteo de premios sin pagar
          COALESCE((
            SELECT COUNT(gl2.id) 
            FROM ganadores_loteria gl2 
@@ -85,12 +82,10 @@ router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async
     );
 
     const r = resumenQuery.rows[0];
-    
-    // Calculamos el resultado neto final: Venta - Comisión - Premios
     const resultadoNeto = Number(r.total_venta) - Number(r.total_comision) - Number(r.total_premios);
 
     // 2. DETALLE POR MODALIDAD
-    const detalle = await query(
+    const detalleMod = await query(
       `SELECT
          td.modalidad,
          COUNT(DISTINCT t.id)                AS tickets,
@@ -108,6 +103,31 @@ router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async
       [bancaFiltro, fecha || null]
     );
 
+    // 3. DETALLE POR LOTERÍA
+    const detalleLot = await query(
+      `SELECT 
+         l.nombre AS loteria_nombre,
+         COALESCE(SUM(td.monto), 0) AS monto_total,
+         COALESCE(SUM(td.comision_monto), 0) AS comision_total,
+         COALESCE((
+            SELECT SUM(gl.monto)
+            FROM ganadores_loteria gl
+            JOIN tickets t2 ON t2.id = gl.ticket_id
+            WHERE t2.banca_id = $1 
+              AND t2.anulado = false 
+              AND gl.loteria_id = l.id
+              AND ($2::date IS NULL OR t2.fecha = $2)
+         ), 0) AS premios_total
+       FROM loterias l
+       LEFT JOIN ticket_detalles td ON td.loteria_id = l.id
+       LEFT JOIN tickets t ON t.id = td.ticket_id AND t.anulado = false AND ($2::date IS NULL OR t.fecha = $2)
+       WHERE t.banca_id = $1
+       GROUP BY l.id, l.nombre
+       HAVING SUM(td.monto) > 0
+       ORDER BY l.nombre`,
+      [bancaFiltro, fecha || null]
+    );
+
     res.json({
       resumen: {
         total_tickets:      parseInt(r.total_tickets),
@@ -118,7 +138,8 @@ router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async
         resultado:          resultadoNeto,
         premios_pendientes: parseInt(r.premios_pendientes)
       },
-      por_modalidad: detalle.rows || []
+      por_modalidad: detalleMod.rows || [],
+      por_loteria: detalleLot.rows || []
     });
 
   } catch (err) {
