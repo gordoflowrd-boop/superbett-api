@@ -41,44 +41,55 @@ router.get('/resumen', requireRol('admin', 'central'), async (req, res) => {
 
 // ======================================================
 // GET /api/reportes/banca?fecha=&banca_id=
-// Admin puede consultar cualquier banca
-// Vendedor solo su propia banca
 // ======================================================
 router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async (req, res) => {
-
   const { banca_id, fecha } = req.query;
-
-  const bancaFiltro = req.usuario.rol === 'vendedor'
-    ? req.usuario.banca_id
-    : banca_id;
+  const bancaFiltro = req.usuario.rol === 'vendedor' ? req.usuario.banca_id : banca_id;
 
   if (!bancaFiltro) {
     return res.status(400).json({ error: 'banca_id es requerido' });
   }
 
   try {
-
-    // -------- RESUMEN GENERAL --------
-    const resumen = await query(
+    // 1. RESUMEN GENERAL (Optimizado con subconsultas para evitar duplicados por JOIN)
+    const resumenQuery = await query(
       `SELECT
          COUNT(t.id) FILTER (WHERE t.anulado = false)                         AS total_tickets,
          COUNT(t.id) FILTER (WHERE t.anulado = true)                          AS tickets_anulados,
-         COALESCE(SUM(t.total_monto)    FILTER (WHERE t.anulado = false), 0)  AS total_venta,
-         COALESCE(SUM(gl.monto), 0)                                           AS total_premios,
-         COALESCE(SUM(td.comision_monto) FILTER (WHERE t.anulado = false), 0) AS total_comision,
-         COALESCE(SUM(t.total_monto)    FILTER (WHERE t.anulado = false), 0)
-           - COALESCE(SUM(td.comision_monto) FILTER (WHERE t.anulado = false), 0)
-           - COALESCE(SUM(gl.monto), 0)                                       AS resultado,
-         COUNT(gl.id) FILTER (WHERE gl.pagado = false AND gl.id IS NOT NULL)  AS premios_pendientes
+         COALESCE(SUM(t.total_monto) FILTER (WHERE t.anulado = false), 0)     AS total_venta,
+         -- Premios calculados de forma independiente para evitar duplicidad
+         COALESCE((
+           SELECT SUM(gl.monto) 
+           FROM ganadores_loteria gl 
+           JOIN tickets t2 ON t2.id = gl.ticket_id 
+           WHERE t2.banca_id = $1 AND ($2::date IS NULL OR t2.fecha = $2)
+         ), 0) AS total_premios,
+         -- Comisiones calculadas desde los detalles
+         COALESCE((
+           SELECT SUM(td2.comision_monto) 
+           FROM ticket_detalles td2 
+           JOIN tickets t3 ON t3.id = td2.ticket_id 
+           WHERE t3.banca_id = $1 AND t3.anulado = false AND ($2::date IS NULL OR t3.fecha = $2)
+         ), 0) AS total_comision,
+         -- Conteo de premios sin pagar
+         COALESCE((
+           SELECT COUNT(gl2.id) 
+           FROM ganadores_loteria gl2 
+           JOIN tickets t4 ON t4.id = gl2.ticket_id 
+           WHERE t4.banca_id = $1 AND gl2.pagado = false AND ($2::date IS NULL OR t4.fecha = $2)
+         ), 0) AS premios_pendientes
        FROM tickets t
-       LEFT JOIN ticket_detalles   td ON td.ticket_id = t.id
-       LEFT JOIN ganadores_loteria gl ON gl.ticket_id = t.id
        WHERE t.banca_id = $1
          AND ($2::date IS NULL OR t.fecha = $2)`,
       [bancaFiltro, fecha || null]
     );
 
-    // -------- DETALLE POR MODALIDAD con comisión --------
+    const r = resumenQuery.rows[0];
+    
+    // Calculamos el resultado neto final: Venta - Comisión - Premios
+    const resultadoNeto = Number(r.total_venta) - Number(r.total_comision) - Number(r.total_premios);
+
+    // 2. DETALLE POR MODALIDAD
     const detalle = await query(
       `SELECT
          td.modalidad,
@@ -98,10 +109,14 @@ router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async
     );
 
     res.json({
-      resumen:       resumen.rows[0] || {
-        total_tickets: 0, tickets_anulados: 0,
-        total_venta: 0, total_premios: 0,
-        total_comision: 0, resultado: 0, premios_pendientes: 0
+      resumen: {
+        total_tickets:      parseInt(r.total_tickets),
+        tickets_anulados:   parseInt(r.tickets_anulados),
+        total_venta:        parseFloat(r.total_venta),
+        total_premios:      parseFloat(r.total_premios),
+        total_comision:     parseFloat(r.total_comision),
+        resultado:          resultadoNeto,
+        premios_pendientes: parseInt(r.premios_pendientes)
       },
       por_modalidad: detalle.rows || []
     });
