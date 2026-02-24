@@ -89,14 +89,20 @@ router.get('/', async (req, res) => {
               t.total_monto, t.anulado,
               u.username AS vendedor,
               b.nombre   AS banca,
-              l.nombre   AS loteria,
+              COALESCE(
+                (SELECT string_agg(l2.nombre, ' + ' ORDER BY l2.nombre)
+                 FROM ticket_loterias tl
+                 JOIN loterias l2 ON l2.id = tl.loteria_id
+                 WHERE tl.ticket_id = t.id),
+                l.nombre
+              ) AS loteria,
               COALESCE(SUM(g.monto), 0) AS total_ganado,
               COUNT(g.id) FILTER (WHERE g.pagado = false AND g.id IS NOT NULL) AS premios_pendientes
        FROM tickets t
        JOIN usuarios u  ON u.id = t.usuario_id
        JOIN bancas b    ON b.id = t.banca_id
-       JOIN jornadas j  ON j.id = t.jornada_id
-       JOIN loterias l  ON l.id = j.loteria_id
+       LEFT JOIN jornadas j  ON j.id = t.jornada_id
+       LEFT JOIN loterias l  ON l.id = j.loteria_id
        LEFT JOIN ganadores_loteria g ON g.ticket_id = t.id
        WHERE ($1::uuid IS NULL OR t.jornada_id = $1)
          AND ($2::uuid IS NULL OR t.banca_id   = $2)
