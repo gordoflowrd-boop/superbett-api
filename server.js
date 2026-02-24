@@ -10,6 +10,7 @@ const ticketsRoutes  = require('./src/routes/tickets');
 const premiosRoutes  = require('./src/routes/premios');
 const reportesRoutes = require('./src/routes/reportes');
 const adminRoutes    = require('./src/routes/admin');
+const bancasRoutes   = require('./src/routes/bancas');
 
 // Cron
 const { iniciarCron } = require('./src/cron');
@@ -40,6 +41,7 @@ app.use('/api/tickets',  ticketsRoutes);
 app.use('/api/premios',  premiosRoutes);
 app.use('/api/reportes', reportesRoutes);
 app.use('/api/admin',    adminRoutes);
+app.use('/api/bancas',   bancasRoutes);
 
 // Health check
 app.get('/health', (_req, res) => {
@@ -61,7 +63,7 @@ app.use((err, _req, res, _next) => {
 // INICIO
 // =============================================
 app.listen(PORT, () => {
-  console.log(`\n🎰 SuperBett API corriendo en puerto ${PORT}`);
+  console.log(`\n SuperBett API corriendo en puerto ${PORT}`);
   console.log(`   Entorno: ${process.env.NODE_ENV || 'development'}\n`);
   iniciarCron();
 });
