@@ -1,6 +1,6 @@
 const express = require('express');
 const { withTransaction, query } = require('../db');
-const { authMiddleware, requireRol } = require('../middleware/auth');
+const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -73,12 +73,6 @@ router.post('/super-pale', async (req, res) => {
     return res.status(400).json({ error: 'Usuario no tiene banca asignada' });
   }
 
-  for (const j of jugadas) {
-    if (!j.numeros || !j.cantidad || j.cantidad <= 0) {
-      return res.status(400).json({ error: 'Cada jugada requiere numeros y cantidad > 0' });
-    }
-  }
-
   try {
     const resultado = await withTransaction(async (client) => {
       const r = await client.query(
@@ -101,6 +95,7 @@ router.post('/super-pale', async (req, res) => {
 // ======================================================
 // GET /api/tickets/ventas-lista
 // Venta agrupada para pantalla "Venta por Lista"
+// CORREGIDO: usa created_at::date
 // ======================================================
 router.get('/ventas-lista', async (req, res) => {
   const { fecha, loteria_id } = req.query;
@@ -126,7 +121,7 @@ router.get('/ventas-lista', async (req, res) => {
        JOIN jornadas j ON j.id = t.jornada_id
        JOIN loterias l ON l.id = j.loteria_id
        WHERE t.banca_id = $1
-         AND t.fecha    = $2
+         AND t.created_at::date = $2::date
          AND t.anulado  = false
          AND td.modalidad != 'SP'
          AND ($3::uuid IS NULL OR j.loteria_id = $3)
@@ -147,19 +142,20 @@ router.get('/ventas-lista', async (req, res) => {
        JOIN ticket_loterias tl ON tl.ticket_id = t.id
        JOIN loterias l      ON l.id = tl.loteria_id
        WHERE t.banca_id = $1
-         AND t.fecha    = $2
+         AND t.created_at::date = $2::date
          AND t.anulado  = false
          AND td.modalidad = 'SP'
-         AND ($3::uuid IS NULL OR tl.loteria_id = $3)
        GROUP BY td.numeros
        ORDER BY SUM(td.cantidad) DESC`,
-      [banca_id, fechaFiltro, loteria_id || null]
+      [banca_id, fechaFiltro]
     );
 
     const total = await query(
       `SELECT COALESCE(SUM(total_monto),0) AS total_general
        FROM tickets
-       WHERE banca_id = $1 AND fecha = $2 AND anulado = false`,
+       WHERE banca_id = $1
+         AND created_at::date = $2::date
+         AND anulado = false`,
       [banca_id, fechaFiltro]
     );
 
@@ -177,56 +173,7 @@ router.get('/ventas-lista', async (req, res) => {
 });
 
 // ======================================================
-// GET /api/tickets
-// Listado general (admin / central / rifero / vendedor)
-// ======================================================
-router.get('/', async (req, res) => {
-  const { jornada_id, banca_id, fecha, fecha_desde, fecha_hasta } = req.query;
-
-  const bancaFiltro = req.usuario.rol === 'vendedor'
-    ? req.usuario.banca_id
-    : (banca_id || null);
-
-  const desde = fecha_desde || fecha || null;
-  const hasta = fecha_hasta || fecha || null;
-
-  try {
-    const result = await query(
-      `SELECT t.id, t.numero_ticket, t.fecha, t.hora,
-              t.total_monto, t.anulado,
-              u.username AS vendedor,
-              b.nombre   AS banca,
-              l.nombre   AS loteria,
-              COALESCE(SUM(g.monto), 0) AS total_ganado,
-              COUNT(g.id) FILTER (WHERE g.pagado = false AND g.id IS NOT NULL) AS premios_pendientes
-       FROM tickets t
-       JOIN usuarios u  ON u.id = t.usuario_id
-       JOIN bancas b    ON b.id = t.banca_id
-       JOIN jornadas j  ON j.id = t.jornada_id
-       JOIN loterias l  ON l.id = j.loteria_id
-       LEFT JOIN ganadores_loteria g ON g.ticket_id = t.id
-       WHERE ($1::uuid IS NULL OR t.jornada_id = $1)
-         AND ($2::uuid IS NULL OR t.banca_id   = $2)
-         AND ($3::date IS NULL OR t.fecha      >= $3)
-         AND ($4::date IS NULL OR t.fecha      <= $4)
-         AND t.anulado = false
-       GROUP BY t.id, u.username, b.nombre, l.nombre
-       ORDER BY t.fecha DESC, t.hora DESC
-       LIMIT 1000`,
-      [jornada_id || null, bancaFiltro, desde, hasta]
-    );
-
-    res.json({ tickets: result.rows });
-
-  } catch (err) {
-    console.error('Error listado tickets:', err);
-    res.status(500).json({ error: 'Error al obtener tickets' });
-  }
-});
-
-// ======================================================
 // GET /api/tickets/:numero
-// (DEBE IR AL FINAL)
 // ======================================================
 router.get('/:numero', async (req, res) => {
   try {

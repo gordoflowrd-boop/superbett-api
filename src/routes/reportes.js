@@ -137,3 +137,4 @@ router.get('/exposicion', requireRol('admin', 'central'), async (req, res) => {
 });
 
 module.exports = router;
+
