@@ -41,6 +41,7 @@ router.get('/resumen', requireRol('admin', 'central'), async (req, res) => {
 
 // ======================================================
 // GET /api/reportes/banca?fecha=&banca_id=
+// Soporta: Resumen, Por Modalidad y Por Lotería
 // ======================================================
 router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async (req, res) => {
   const { banca_id, fecha } = req.query;
@@ -51,29 +52,32 @@ router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async
   }
 
   try {
-    // 1. RESUMEN GENERAL
+    // 1. RESUMEN GENERAL (Calculado con subconsultas para evitar duplicidad de montos)
     const resumenQuery = await query(
       `SELECT
          COUNT(t.id) FILTER (WHERE t.anulado = false)                         AS total_tickets,
          COUNT(t.id) FILTER (WHERE t.anulado = true)                          AS tickets_anulados,
          COALESCE(SUM(t.total_monto) FILTER (WHERE t.anulado = false), 0)     AS total_venta,
+         -- Subconsulta para premios totalizados correctamente
          COALESCE((
            SELECT SUM(gl.monto) 
            FROM ganadores_loteria gl 
            JOIN tickets t2 ON t2.id = gl.ticket_id 
-           WHERE t2.banca_id = $1 AND ($2::date IS NULL OR t2.fecha = $2)
+           WHERE t2.banca_id = $1 AND t2.anulado = false AND ($2::date IS NULL OR t2.fecha = $2)
          ), 0) AS total_premios,
+         -- Subconsulta para comisiones totalizadas correctamente
          COALESCE((
            SELECT SUM(td2.comision_monto) 
            FROM ticket_detalles td2 
            JOIN tickets t3 ON t3.id = td2.ticket_id 
            WHERE t3.banca_id = $1 AND t3.anulado = false AND ($2::date IS NULL OR t3.fecha = $2)
          ), 0) AS total_comision,
+         -- Conteo de premios sin pagar
          COALESCE((
            SELECT COUNT(gl2.id) 
            FROM ganadores_loteria gl2 
            JOIN tickets t4 ON t4.id = gl2.ticket_id 
-           WHERE t4.banca_id = $1 AND gl2.pagado = false AND ($2::date IS NULL OR t4.fecha = $2)
+           WHERE t4.banca_id = $1 AND t4.anulado = false AND gl2.pagado = false AND ($2::date IS NULL OR t4.fecha = $2)
          ), 0) AS premios_pendientes
        FROM tickets t
        WHERE t.banca_id = $1
@@ -82,7 +86,10 @@ router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async
     );
 
     const r = resumenQuery.rows[0];
-    const resultadoNeto = Number(r.total_venta) - Number(r.total_comision) - Number(r.total_premios);
+    const totalVenta = parseFloat(r.total_venta);
+    const totalComision = parseFloat(r.total_comision);
+    const totalPremios = parseFloat(r.total_premios);
+    const resultadoNeto = totalVenta - totalComision - totalPremios;
 
     // 2. DETALLE POR MODALIDAD
     const detalleMod = await query(
@@ -103,7 +110,7 @@ router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async
       [bancaFiltro, fecha || null]
     );
 
-    // 3. DETALLE POR LOTERÍA
+    // 3. DETALLE POR LOTERÍA (NUEVO)
     const detalleLot = await query(
       `SELECT 
          l.nombre AS loteria_nombre,
@@ -130,12 +137,12 @@ router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async
 
     res.json({
       resumen: {
-        total_tickets:      parseInt(r.total_tickets),
-        tickets_anulados:   parseInt(r.tickets_anulados),
-        total_venta:        parseFloat(r.total_venta),
-        total_premios:      parseFloat(r.total_premios),
-        total_comision:     parseFloat(r.total_comision),
-        resultado:          resultadoNeto,
+        total_tickets: parseInt(r.total_tickets),
+        tickets_anulados: parseInt(r.tickets_anulados),
+        total_venta: totalVenta,
+        total_premios: totalPremios,
+        total_comision: totalComision,
+        resultado: resultadoNeto,
         premios_pendientes: parseInt(r.premios_pendientes)
       },
       por_modalidad: detalleMod.rows || [],
