@@ -148,22 +148,32 @@ router.get('/ventas-lista', async (req, res) => {
     );
 
     const superPale = await query(
-      `SELECT 'SP'                                                     AS modalidad,
-              td.numeros                                               AS jugada,
-              string_agg(DISTINCT l.nombre, ' + ' ORDER BY l.nombre)  AS loteria,
-              SUM(td.cantidad)                                         AS cantidad,
-              SUM(td.monto)                                            AS monto
-       FROM ticket_detalles td
-       JOIN tickets t        ON t.id          = td.ticket_id
-       JOIN ticket_loterias  tl ON tl.ticket_id = t.id
-       JOIN loterias l       ON l.id          = tl.loteria_id
-       WHERE t.banca_id    = $1
-         AND t.fecha       = $2
-         AND t.anulado     = false
-         AND td.modalidad  = 'SP'
-         AND ($3::uuid IS NULL OR tl.loteria_id = $3)
-       GROUP BY td.numeros
-       ORDER BY SUM(td.cantidad) DESC`,
+      `SELECT 
+        sp.jugada,
+        sp.modalidad,
+        SUM(sp.cantidad) AS cantidad,
+        SUM(sp.monto)    AS monto,
+        sp.loteria
+       FROM (
+         SELECT 
+           td.numeros AS jugada,
+           'SP' AS modalidad,
+           td.cantidad,
+           td.monto,
+           string_agg(DISTINCT l.nombre, ' + ' ORDER BY l.nombre) AS loteria
+         FROM tickets t
+         JOIN ticket_detalles td ON td.ticket_id = t.id
+         JOIN ticket_loterias tl ON tl.ticket_id = t.id
+         JOIN loterias l       ON l.id          = tl.loteria_id
+         WHERE t.banca_id    = $1
+           AND t.fecha       = $2::date
+           AND t.anulado     = false
+           AND td.modalidad  = 'SP'
+           AND ($3::uuid IS NULL OR tl.loteria_id = $3)
+         GROUP BY t.id, td.numeros, td.cantidad, td.monto
+       ) sp
+       GROUP BY sp.jugada, sp.modalidad, sp.loteria
+       ORDER BY SUM(sp.cantidad) DESC`,
       [banca_id, fechaFiltro, loteria_id || null]
     );
 
