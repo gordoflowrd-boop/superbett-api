@@ -53,6 +53,7 @@ router.post('/', async (req, res) => {
   }
 });
 
+
 // ======================================================
 // POST /api/tickets/super-pale
 // ======================================================
@@ -92,10 +93,11 @@ router.post('/super-pale', async (req, res) => {
   }
 });
 
+
 // ======================================================
 // GET /api/tickets/ventas-lista
 // Venta agrupada para pantalla "Venta por Lista"
-// CORREGIDO: usa created_at::date
+// FILTRA POR t.fecha (NO created_at)
 // ======================================================
 router.get('/ventas-lista', async (req, res) => {
   const { fecha, loteria_id } = req.query;
@@ -108,6 +110,8 @@ router.get('/ventas-lista', async (req, res) => {
   const fechaFiltro = fecha || new Date().toISOString().slice(0, 10);
 
   try {
+
+    // ------------------ NORMALES ------------------
     const normales = await query(
       `SELECT
          td.modalidad,
@@ -121,8 +125,8 @@ router.get('/ventas-lista', async (req, res) => {
        JOIN jornadas j ON j.id = t.jornada_id
        JOIN loterias l ON l.id = j.loteria_id
        WHERE t.banca_id = $1
-         AND t.created_at::date = $2::date
-         AND t.anulado  = false
+         AND t.fecha = $2::date
+         AND t.anulado = false
          AND td.modalidad != 'SP'
          AND ($3::uuid IS NULL OR j.loteria_id = $3)
        GROUP BY td.modalidad, td.numeros, l.nombre, l.id
@@ -130,6 +134,7 @@ router.get('/ventas-lista', async (req, res) => {
       [banca_id, fechaFiltro, loteria_id || null]
     );
 
+    // ------------------ SUPER PALE ------------------
     const superPale = await query(
       `SELECT
          'SP' AS modalidad,
@@ -142,19 +147,20 @@ router.get('/ventas-lista', async (req, res) => {
        JOIN ticket_loterias tl ON tl.ticket_id = t.id
        JOIN loterias l      ON l.id = tl.loteria_id
        WHERE t.banca_id = $1
-         AND t.created_at::date = $2::date
-         AND t.anulado  = false
+         AND t.fecha = $2::date
+         AND t.anulado = false
          AND td.modalidad = 'SP'
        GROUP BY td.numeros
        ORDER BY SUM(td.cantidad) DESC`,
       [banca_id, fechaFiltro]
     );
 
+    // ------------------ TOTAL GENERAL ------------------
     const total = await query(
-      `SELECT COALESCE(SUM(total_monto),0) AS total_general
+      `SELECT COALESCE(SUM(total_monto), 0) AS total_general
        FROM tickets
        WHERE banca_id = $1
-         AND created_at::date = $2::date
+         AND fecha = $2::date
          AND anulado = false`,
       [banca_id, fechaFiltro]
     );
@@ -172,8 +178,10 @@ router.get('/ventas-lista', async (req, res) => {
   }
 });
 
+
 // ======================================================
 // GET /api/tickets/:numero
+// SIEMPRE AL FINAL
 // ======================================================
 router.get('/:numero', async (req, res) => {
   try {
@@ -182,10 +190,10 @@ router.get('/:numero', async (req, res) => {
       [req.params.numero.toUpperCase()]
     );
 
-    const data = r.rows[0].consultar_ticket;
+    const data = r.rows[0]?.consultar_ticket;
 
-    if (data.estado === 'error') {
-      return res.status(404).json(data);
+    if (!data || data.estado === 'error') {
+      return res.status(404).json({ error: 'Ticket no encontrado' });
     }
 
     if (req.usuario.rol === 'vendedor') {
@@ -194,7 +202,7 @@ router.get('/:numero', async (req, res) => {
         [req.params.numero.toUpperCase()]
       );
 
-      if (check.rows[0]?.banca_id !== req.usuario.banca_id) {
+      if (!check.rows.length || check.rows[0].banca_id !== req.usuario.banca_id) {
         return res.status(403).json({ error: 'Ticket no pertenece a tu banca' });
       }
     }
