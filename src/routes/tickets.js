@@ -96,8 +96,6 @@ router.post('/super-pale', async (req, res) => {
 
 // ======================================================
 // GET /api/tickets/ventas-lista
-// Venta agrupada para pantalla "Venta por Lista"
-// FILTRA POR t.fecha (NO created_at)
 // ======================================================
 router.get('/ventas-lista', async (req, res) => {
   const { fecha, loteria_id } = req.query;
@@ -111,7 +109,6 @@ router.get('/ventas-lista', async (req, res) => {
 
   try {
 
-    // ------------------ NORMALES ------------------
     const normales = await query(
       `SELECT
          td.modalidad,
@@ -129,17 +126,15 @@ router.get('/ventas-lista', async (req, res) => {
          AND t.anulado = false
          AND td.modalidad != 'SP'
          AND ($3::uuid IS NULL OR j.loteria_id = $3)
-       GROUP BY td.modalidad, td.numeros, l.nombre, l.id
-       ORDER BY td.modalidad, SUM(td.cantidad) DESC`,
+       GROUP BY td.modalidad, td.numeros, l.nombre, l.id`,
       [banca_id, fechaFiltro, loteria_id || null]
     );
 
-    // ------------------ SUPER PALE ------------------
     const superPale = await query(
       `SELECT
          'SP' AS modalidad,
          td.numeros AS jugada,
-         string_agg(DISTINCT l.nombre, ' + ' ORDER BY l.nombre) AS loteria,
+         string_agg(DISTINCT l.nombre, ' + ') AS loteria,
          SUM(td.cantidad) AS cantidad,
          SUM(td.monto)    AS monto
        FROM ticket_detalles td
@@ -150,12 +145,10 @@ router.get('/ventas-lista', async (req, res) => {
          AND t.fecha = $2::date
          AND t.anulado = false
          AND td.modalidad = 'SP'
-       GROUP BY td.numeros
-       ORDER BY SUM(td.cantidad) DESC`,
+       GROUP BY td.numeros`,
       [banca_id, fechaFiltro]
     );
 
-    // ------------------ TOTAL GENERAL ------------------
     const total = await query(
       `SELECT COALESCE(SUM(total_monto), 0) AS total_general
        FROM tickets
@@ -175,6 +168,44 @@ router.get('/ventas-lista', async (req, res) => {
   } catch (err) {
     console.error('Error ventas-lista:', err);
     res.status(500).json({ error: 'Error al obtener ventas por lista' });
+  }
+});
+
+
+// ======================================================
+// GET /api/tickets
+// LISTADO GENERAL (Tickets Vendidos)
+// ======================================================
+router.get('/', async (req, res) => {
+  const { fecha } = req.query;
+  const banca_id  = req.usuario.banca_id;
+
+  if (!banca_id) {
+    return res.status(400).json({ error: 'Usuario sin banca asignada' });
+  }
+
+  try {
+    const result = await query(
+      `SELECT t.numero_ticket,
+              t.fecha,
+              t.hora,
+              t.total_monto,
+              t.anulado,
+              COALESCE(SUM(g.monto),0) AS total_ganado
+       FROM tickets t
+       LEFT JOIN ganadores_loteria g ON g.ticket_id = t.id
+       WHERE t.banca_id = $1
+         AND ($2::date IS NULL OR t.fecha = $2::date)
+       GROUP BY t.id
+       ORDER BY t.numero_ticket DESC`,
+      [banca_id, fecha || null]
+    );
+
+    res.json({ tickets: result.rows });
+
+  } catch (err) {
+    console.error('Error listado tickets:', err);
+    res.status(500).json({ error: 'Error al obtener tickets' });
   }
 });
 
