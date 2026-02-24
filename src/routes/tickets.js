@@ -53,7 +53,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-
 // ======================================================
 // POST /api/tickets/super-pale
 // ======================================================
@@ -93,6 +92,65 @@ router.post('/super-pale', async (req, res) => {
   }
 });
 
+// ======================================================
+// POST /api/tickets/:numero/anular
+// ======================================================
+router.post('/:numero/anular', async (req, res) => {
+
+  const numero     = req.params.numero.toUpperCase();
+  const usuario_id = req.usuario.id;
+  const banca_id   = req.usuario.banca_id;
+
+  if (!banca_id) {
+    return res.status(400).json({ error: 'Usuario sin banca asignada' });
+  }
+
+  try {
+
+    const ticketCheck = await query(
+      `SELECT id, banca_id, anulado, total_ganado
+       FROM tickets
+       WHERE numero_ticket = $1`,
+      [numero]
+    );
+
+    if (!ticketCheck.rows.length) {
+      return res.status(404).json({ error: 'Ticket no encontrado' });
+    }
+
+    const ticket = ticketCheck.rows[0];
+
+    // Seguridad: vendedor solo su banca
+    if (req.usuario.rol === 'vendedor' && ticket.banca_id !== banca_id) {
+      return res.status(403).json({ error: 'Ticket no pertenece a tu banca' });
+    }
+
+    if (ticket.anulado) {
+      return res.status(400).json({ error: 'Ticket ya está anulado' });
+    }
+
+    if (Number(ticket.total_ganado || 0) > 0) {
+      return res.status(400).json({ error: 'No se puede anular un ticket ganador' });
+    }
+
+    const r = await query(
+      'SELECT anular_ticket($1, $2)',
+      [numero, usuario_id]
+    );
+
+    const resultado = r.rows[0]?.anular_ticket;
+
+    if (resultado?.estado === 'error') {
+      return res.status(400).json({ error: resultado.mensaje });
+    }
+
+    res.json({ ok: true });
+
+  } catch (err) {
+    console.error('Error anular_ticket:', err);
+    res.status(500).json({ error: 'Error al anular ticket' });
+  }
+});
 
 // ======================================================
 // GET /api/tickets/ventas-lista
@@ -130,25 +188,6 @@ router.get('/ventas-lista', async (req, res) => {
       [banca_id, fechaFiltro, loteria_id || null]
     );
 
-    const superPale = await query(
-      `SELECT
-         'SP' AS modalidad,
-         td.numeros AS jugada,
-         string_agg(DISTINCT l.nombre, ' + ') AS loteria,
-         SUM(td.cantidad) AS cantidad,
-         SUM(td.monto)    AS monto
-       FROM ticket_detalles td
-       JOIN tickets t       ON t.id = td.ticket_id
-       JOIN ticket_loterias tl ON tl.ticket_id = t.id
-       JOIN loterias l      ON l.id = tl.loteria_id
-       WHERE t.banca_id = $1
-         AND t.fecha = $2::date
-         AND t.anulado = false
-         AND td.modalidad = 'SP'
-       GROUP BY td.numeros`,
-      [banca_id, fechaFiltro]
-    );
-
     const total = await query(
       `SELECT COALESCE(SUM(total_monto), 0) AS total_general
        FROM tickets
@@ -161,7 +200,6 @@ router.get('/ventas-lista', async (req, res) => {
     res.json({
       fecha: fechaFiltro,
       normales: normales.rows,
-      super_pale: superPale.rows,
       total_general: total.rows[0].total_general
     });
 
@@ -171,10 +209,8 @@ router.get('/ventas-lista', async (req, res) => {
   }
 });
 
-
 // ======================================================
 // GET /api/tickets
-// LISTADO GENERAL (Tickets Vendidos)
 // ======================================================
 router.get('/', async (req, res) => {
   const { fecha } = req.query;
@@ -208,7 +244,6 @@ router.get('/', async (req, res) => {
     res.status(500).json({ error: 'Error al obtener tickets' });
   }
 });
-
 
 // ======================================================
 // GET /api/tickets/:numero
