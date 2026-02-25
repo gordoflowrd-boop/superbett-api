@@ -6,7 +6,6 @@ const router = express.Router();
 router.use(authMiddleware);
 
 // GET /api/jornadas/abiertas
-// Devuelve las jornadas disponibles para vender ahora mismo
 router.get('/abiertas', async (req, res) => {
   try {
     const result = await query('SELECT jornadas_abiertas($1)', [req.query.fecha || null]);
@@ -28,7 +27,7 @@ router.get('/incompletas', requireRol('admin', 'central'), async (req, res) => {
   }
 });
 
-// GET /api/jornadas?fecha=2026-02-23  [admin] — listado con estado
+// GET /api/jornadas?fecha=  [admin]
 router.get('/', requireRol('admin', 'central'), async (req, res) => {
   const { fecha } = req.query;
   try {
@@ -85,6 +84,28 @@ router.post('/:id/reabrir', requireRol('admin'), async (req, res) => {
   } catch (err) {
     console.error('Error reabrir_jornada:', err);
     res.status(500).json({ error: 'Error al reabrir jornada' });
+  }
+});
+
+// PATCH /api/jornadas/:id  — actualizar estado y/o horario  [admin]
+router.patch('/:id', requireRol('admin', 'central'), async (req, res) => {
+  const { estado, hora_inicio, hora_cierre } = req.body;
+  const valid = ['abierto', 'cerrado', 'completado', 'finalizado'];
+  if (estado && !valid.includes(estado))
+    return res.status(400).json({ error: 'Estado inválido' });
+  try {
+    await query(
+      `UPDATE jornadas SET
+         estado      = COALESCE($1, estado),
+         hora_inicio = COALESCE($2::time, hora_inicio),
+         hora_cierre = COALESCE($3::time, hora_cierre)
+       WHERE id = $4`,
+      [estado || null, hora_inicio || null, hora_cierre || null, req.params.id]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error actualizar jornada:', err);
+    res.status(500).json({ error: 'Error al actualizar jornada' });
   }
 });
 

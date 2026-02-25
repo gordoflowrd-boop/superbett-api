@@ -171,7 +171,9 @@ router.post('/bancas', async (req, res) => {
 // PATCH /api/admin/bancas/:id
 router.patch('/bancas/:id', async (req, res) => {
   const { nombre, nombre_ticket, esquema_precio_id, esquema_pago_id,
-          limite_q, limite_p, limite_t, limite_sp, activa } = req.body;
+          limite_q, limite_p, limite_t, limite_sp, activa,
+          comision_q, comision_p, comision_t, comision_sp,
+          tope_q, tope_p, tope_t, tope_sp } = req.body;
   try {
     await query(
       `UPDATE bancas SET
@@ -184,10 +186,20 @@ router.patch('/bancas/:id', async (req, res) => {
          limite_t          = COALESCE($7,  limite_t),
          limite_sp         = COALESCE($8,  limite_sp),
          activa            = COALESCE($9,  activa),
+         comision_q        = COALESCE($10, comision_q),
+         comision_p        = COALESCE($11, comision_p),
+         comision_t        = COALESCE($12, comision_t),
+         comision_sp       = COALESCE($13, comision_sp),
+         tope_q            = COALESCE($14, tope_q),
+         tope_p            = COALESCE($15, tope_p),
+         tope_t            = COALESCE($16, tope_t),
+         tope_sp           = COALESCE($17, tope_sp),
          updated_at        = now()
-       WHERE id = $10`,
+       WHERE id = $18`,
       [nombre, nombre_ticket, esquema_precio_id, esquema_pago_id,
-       limite_q, limite_p, limite_t, limite_sp, activa, req.params.id]
+       limite_q, limite_p, limite_t, limite_sp, activa,
+       comision_q, comision_p, comision_t, comision_sp,
+       tope_q, tope_p, tope_t, tope_sp, req.params.id]
     );
     res.json({ estado: 'ok', mensaje: 'Banca actualizada' });
   } catch (err) {
