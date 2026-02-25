@@ -4,8 +4,10 @@ const { query } = require('../db');
 const { authMiddleware, requireRol } = require('../middleware/auth');
 
 const router = express.Router();
+
+// Middleware de autenticación y autorización actualizado
 router.use(authMiddleware);
-router.use(requireRol('admin'));
+router.use(requireRol('admin', 'central'));
 
 // =============================================
 // USUARIOS
