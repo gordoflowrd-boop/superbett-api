@@ -108,7 +108,6 @@ router.get('/', async (req, res) => {
          AND ($2::uuid IS NULL OR t.banca_id   = $2)
          AND ($3::date IS NULL OR t.fecha      >= $3)
          AND ($4::date IS NULL OR t.fecha      <= $4)
-         AND t.anulado = false
        GROUP BY t.id, u.username, b.nombre, l.nombre
        ORDER BY t.fecha DESC, t.hora DESC
        LIMIT 1000`,
