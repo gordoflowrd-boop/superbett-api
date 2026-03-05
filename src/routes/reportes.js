@@ -23,18 +23,52 @@ router.get('/ganadores', requireRol('admin', 'central', 'rifero'), async (req, r
 });
 
 // ======================================================
-// GET /api/reportes/resumen
+// GET /api/reportes/resumen?fecha=YYYY-MM-DD
+// Devuelve ARRAY de bancas con sus totales del día
+// [{banca, banca_id, total_venta, total_comision, total_premios, resultado, total_tickets}]
 // ======================================================
 router.get('/resumen', requireRol('admin', 'central'), async (req, res) => {
   const { fecha } = req.query;
   try {
     const result = await query(
-      'SELECT resumen_admin_dia($1::date)',
+      `SELECT
+         b.nombre                                                     AS banca,
+         b.id                                                         AS banca_id,
+         COALESCE(SUM(t.total_monto),       0)::numeric(12,2)        AS total_venta,
+         COALESCE(SUM(td_agg.comision), 0)::numeric(12,2)            AS total_comision,
+         COALESCE(SUM(gl_agg.premios),  0)::numeric(12,2)            AS total_premios,
+         (COALESCE(SUM(t.total_monto),      0)
+           - COALESCE(SUM(td_agg.comision), 0)
+           - COALESCE(SUM(gl_agg.premios),  0))::numeric(12,2)       AS resultado,
+         COUNT(DISTINCT t.id)::int                                    AS total_tickets
+       FROM bancas b
+       -- Tickets del día
+       LEFT JOIN tickets t
+         ON t.banca_id = b.id
+        AND t.anulado  = false
+        AND ($1::date IS NULL OR t.fecha = $1::date)
+       -- Comisiones agregadas por ticket
+       LEFT JOIN LATERAL (
+         SELECT ticket_id, COALESCE(SUM(comision_monto), 0) AS comision
+         FROM ticket_detalles
+         GROUP BY ticket_id
+       ) td_agg ON td_agg.ticket_id = t.id
+       -- Premios agregados por ticket
+       LEFT JOIN LATERAL (
+         SELECT ticket_id, COALESCE(SUM(monto), 0) AS premios
+         FROM ganadores_loteria
+         GROUP BY ticket_id
+       ) gl_agg ON gl_agg.ticket_id = t.id
+       GROUP BY b.id, b.nombre
+       HAVING COUNT(t.id) > 0
+       ORDER BY b.nombre`,
       [fecha || null]
     );
-    res.json(result.rows[0]?.resumen_admin_dia || {});
+
+    // Siempre devuelve array (nunca {})
+    res.json(result.rows);
   } catch (err) {
-    console.error('Error resumen_admin_dia:', err);
+    console.error('Error resumen:', err);
     res.status(500).json({ error: 'Error al obtener resumen' });
   }
 });
@@ -52,8 +86,6 @@ router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async
   }
 
   try {
-
-    // ── RESUMEN GENERAL ──────────────────────────────
     const resResumen = await query(
       `SELECT
          (SELECT COUNT(id)            FROM tickets WHERE banca_id = $1 AND anulado = false AND ($2::date IS NULL OR fecha = $2)) AS total_tickets,
@@ -76,12 +108,11 @@ router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async
       [bancaFiltro, f]
     );
 
-    const r  = resResumen.rows[0];
-    const v  = parseFloat(r.total_venta    || 0);
-    const c  = parseFloat(r.total_comision || 0);
-    const p  = parseFloat(r.total_premios  || 0);
+    const r = resResumen.rows[0];
+    const v = parseFloat(r.total_venta    || 0);
+    const c = parseFloat(r.total_comision || 0);
+    const p = parseFloat(r.total_premios  || 0);
 
-    // ── DETALLE POR MODALIDAD ────────────────────────
     const resMod = await query(
       `SELECT
          td.modalidad,
@@ -99,8 +130,6 @@ router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async
       [bancaFiltro, f]
     );
 
-    // ── DETALLE POR LOTERÍA ──────────────────────────
-    // La lotería viene de tickets → jornadas → loterias (ticket_detalles NO tiene loteria_id)
     const resLot = await query(
       `SELECT
          l.nombre                                          AS loteria_nombre,
@@ -129,12 +158,12 @@ router.get('/banca', requireRol('admin', 'central', 'rifero', 'vendedor'), async
 
     res.json({
       resumen: {
-        total_tickets:    parseInt(r.total_tickets    || 0),
-        tickets_anulados: parseInt(r.tickets_anulados || 0),
-        total_venta:      v,
-        total_premios:    p,
-        total_comision:   c,
-        resultado:        v - c - p,
+        total_tickets:      parseInt(r.total_tickets    || 0),
+        tickets_anulados:   parseInt(r.tickets_anulados || 0),
+        total_venta:        v,
+        total_premios:      p,
+        total_comision:     c,
+        resultado:          v - c - p,
         premios_pendientes: parseInt(r.premios_pendientes || 0)
       },
       por_modalidad: resMod.rows || [],
