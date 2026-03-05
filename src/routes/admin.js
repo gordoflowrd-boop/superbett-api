@@ -71,7 +71,7 @@ router.post('/usuarios', async (req, res) => {
 router.patch('/usuarios/:id', async (req, res) => {
   const { nombre, username, rol, activo, password, password_actual } = req.body;
   const { id } = req.params;
-  const esPropio = req.usuario.id === id; // Admin editando su propia cuenta
+  const esPropio = String(req.usuario.id) === String(id); // Admin editando su propia cuenta
 
   try {
     // ── Cambio de contraseña ────────────────────────────
@@ -109,21 +109,21 @@ router.patch('/usuarios/:id', async (req, res) => {
 
     // ── Actualizar datos ────────────────────────────────
     if (nombre !== undefined || username !== undefined || rol !== undefined || activo !== undefined) {
+      // Usar valores directos: si viene definido se usa, si no se usa COALESCE para mantener el actual
+      const nombreVal   = nombre   !== undefined ? (nombre.trim()   || null)                    : null;
+      const usernameVal = username !== undefined ? (username.trim().toLowerCase() || null)       : null;
+      const rolVal      = rol      !== undefined ? (rol              || null)                    : null;
+      const activoVal   = activo   !== undefined ? activo                                        : null;
+
       await query(
         `UPDATE usuarios SET
-           nombre     = COALESCE($1, nombre),
-           username   = COALESCE($2, username),
-           rol        = COALESCE($3, rol),
-           activo     = COALESCE($4, activo),
+           nombre     = CASE WHEN $1::text IS NOT NULL THEN $1::text ELSE nombre     END,
+           username   = CASE WHEN $2::text IS NOT NULL THEN $2::text ELSE username   END,
+           rol        = CASE WHEN $3::text IS NOT NULL THEN $3::text ELSE rol        END,
+           activo     = CASE WHEN $4::bool IS NOT NULL THEN $4::bool ELSE activo     END,
            updated_at = now()
          WHERE id = $5`,
-        [
-          nombre   !== undefined ? (nombre   || null) : null,
-          username !== undefined ? (username.trim().toLowerCase() || null) : null,
-          rol      !== undefined ? (rol      || null) : null,
-          activo   !== undefined ? activo    : null,
-          id
-        ]
+        [nombreVal, usernameVal, rolVal, activoVal, id]
       );
     }
 
