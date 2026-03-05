@@ -69,25 +69,64 @@ router.post('/usuarios', async (req, res) => {
 
 // PATCH /api/admin/usuarios/:id
 router.patch('/usuarios/:id', async (req, res) => {
-  const { nombre, rol, activo, password } = req.body;
+  const { nombre, username, rol, activo, password, password_actual } = req.body;
   const { id } = req.params;
+  const esPropio = req.usuario.id === id; // Admin editando su propia cuenta
 
   try {
+    // ── Cambio de contraseña ────────────────────────────
     if (password) {
+      if (password.length < 6) {
+        return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+      }
+
+      // Si es su propia cuenta, verificar contraseña actual
+      if (esPropio) {
+        if (!password_actual) {
+          return res.status(400).json({ error: 'Debes ingresar tu contraseña actual' });
+        }
+        const userRes = await query('SELECT password FROM usuarios WHERE id = $1', [id]);
+        const ok = await bcrypt.compare(password_actual, userRes.rows[0].password);
+        if (!ok) {
+          return res.status(401).json({ error: 'Contraseña actual incorrecta' });
+        }
+      }
+
       const hash = await bcrypt.hash(password, 10);
       await query('UPDATE usuarios SET password = $1, updated_at = now() WHERE id = $2', [hash, id]);
     }
-    if (nombre !== undefined || rol !== undefined || activo !== undefined) {
+
+    // ── Verificar username único ────────────────────────
+    if (username !== undefined) {
+      const existe = await query(
+        'SELECT id FROM usuarios WHERE username = $1 AND id != $2',
+        [username.trim().toLowerCase(), id]
+      );
+      if (existe.rows.length > 0) {
+        return res.status(409).json({ error: 'El username ya está en uso' });
+      }
+    }
+
+    // ── Actualizar datos ────────────────────────────────
+    if (nombre !== undefined || username !== undefined || rol !== undefined || activo !== undefined) {
       await query(
         `UPDATE usuarios SET
            nombre     = COALESCE($1, nombre),
-           rol        = COALESCE($2, rol),
-           activo     = COALESCE($3, activo),
+           username   = COALESCE($2, username),
+           rol        = COALESCE($3, rol),
+           activo     = COALESCE($4, activo),
            updated_at = now()
-         WHERE id = $4`,
-        [nombre || null, rol || null, activo !== undefined ? activo : null, id]
+         WHERE id = $5`,
+        [
+          nombre   !== undefined ? (nombre   || null) : null,
+          username !== undefined ? (username.trim().toLowerCase() || null) : null,
+          rol      !== undefined ? (rol      || null) : null,
+          activo   !== undefined ? activo    : null,
+          id
+        ]
       );
     }
+
     res.json({ estado: 'ok', mensaje: 'Usuario actualizado' });
   } catch (err) {
     console.error('Error actualizar usuario:', err);
