@@ -376,4 +376,41 @@ router.get('/esquemas/pagos', async (req, res) => {
   }
 });
 
+// =============================================
+// CONFIGURACIÓN GLOBAL
+// =============================================
+
+// GET /api/admin/configuracion
+router.get('/configuracion', async (req, res) => {
+  try {
+    const result = await query(`SELECT clave, valor FROM configuracion`);
+    const config = {};
+    result.rows.forEach(r => { config[r.clave] = r.valor; });
+    res.json({ config });
+  } catch (err) {
+    console.error('Error leer configuracion:', err);
+    res.status(500).json({ error: 'Error al leer configuración' });
+  }
+});
+
+// PUT /api/admin/configuracion
+router.put('/configuracion', async (req, res) => {
+  const { tiempo_anulacion } = req.body;
+  try {
+    if (tiempo_anulacion !== undefined) {
+      await query(
+        `INSERT INTO configuracion (clave, valor, updated_at)
+           VALUES ('tiempo_anulacion', $1, now())
+           ON CONFLICT (clave) DO UPDATE
+             SET valor = $1, updated_at = now()`,
+        [String(tiempo_anulacion)]
+      );
+    }
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error guardar configuracion:', err);
+    res.status(500).json({ error: 'Error al guardar configuración' });
+  }
+});
+
 module.exports = router;
