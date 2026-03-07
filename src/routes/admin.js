@@ -305,6 +305,32 @@ router.post('/loterias', async (req, res) => {
   }
 });
 
+// PATCH /api/admin/loterias/:id — actualizar límites generales por número
+router.patch('/loterias/:id', async (req, res) => {
+  const { limite_q, limite_p, limite_t, limite_sp } = req.body;
+  try {
+    await query(
+      `UPDATE loterias
+          SET limite_q  = $1,
+              limite_p  = $2,
+              limite_t  = $3,
+              limite_sp = $4
+        WHERE id = $5`,
+      [
+        limite_q  ?? null,
+        limite_p  ?? null,
+        limite_t  ?? null,
+        limite_sp ?? null,
+        req.params.id,
+      ]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error patch loterias:', err);
+    res.status(500).json({ error: 'Error al actualizar límites' });
+  }
+});
+
 // =============================================
 // ESQUEMAS DE PRECIOS Y PAGOS
 // =============================================
