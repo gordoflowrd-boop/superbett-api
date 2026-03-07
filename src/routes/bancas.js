@@ -6,8 +6,6 @@ const router = express.Router();
 router.use(authMiddleware);
 
 // GET /api/bancas/config
-// Devuelve la configuración de la banca del vendedor:
-// precios por modalidad, límites, nombre y tiempo_anulacion global.
 router.get('/config', async (req, res) => {
   const banca_id = req.usuario.banca_id;
 
@@ -16,7 +14,6 @@ router.get('/config', async (req, res) => {
   }
 
   try {
-    // Datos de la banca
     const bancaRes = await query(
       `SELECT b.id, b.nombre, b.codigo, b.nombre_ticket,
               b.esquema_precio_id, b.esquema_pago_id,
@@ -32,7 +29,6 @@ router.get('/config', async (req, res) => {
 
     const banca = bancaRes.rows[0];
 
-    // Precios por modalidad y lotería
     let precios = [];
     if (banca.esquema_precio_id) {
       const preciosRes = await query(
@@ -44,12 +40,12 @@ router.get('/config', async (req, res) => {
       precios = preciosRes.rows;
     }
 
-    // Configuración global (tiempo límite de anulación)
+    // Lee tiempo_anulacion de la tabla clave/valor
     const cfgRes = await query(
-      `SELECT tiempo_anulacion FROM configuracion WHERE id = 1`
+      `SELECT valor FROM configuracion WHERE clave = 'tiempo_anulacion'`
     );
     const tiempo_anulacion = cfgRes.rows.length
-      ? (cfgRes.rows[0].tiempo_anulacion ?? 0)
+      ? (parseInt(cfgRes.rows[0].valor, 10) || 0)
       : 0;
 
     res.json({
@@ -62,7 +58,7 @@ router.get('/config', async (req, res) => {
         limite_p:         banca.limite_p,
         limite_t:         banca.limite_t,
         limite_sp:        banca.limite_sp,
-        tiempo_anulacion,  // ← nuevo
+        tiempo_anulacion,
       },
       precios,
     });
@@ -70,36 +66,6 @@ router.get('/config', async (req, res) => {
   } catch (err) {
     console.error('Error banca config:', err);
     res.status(500).json({ error: 'Error al obtener configuración de banca' });
-  }
-});
-
-// PUT /api/bancas/config/tiempo-anulacion
-// Solo admin. Actualiza el tiempo límite global de anulación.
-router.put('/config/tiempo-anulacion', async (req, res) => {
-  if (req.usuario.rol !== 'admin') {
-    return res.status(403).json({ error: 'Acceso denegado' });
-  }
-
-  const { tiempo_anulacion } = req.body;
-
-  if (tiempo_anulacion === undefined || tiempo_anulacion === null) {
-    return res.status(400).json({ error: 'Campo tiempo_anulacion requerido' });
-  }
-
-  const minutos = parseInt(tiempo_anulacion, 10);
-  if (isNaN(minutos) || minutos < 0) {
-    return res.status(400).json({ error: 'tiempo_anulacion debe ser un número >= 0' });
-  }
-
-  try {
-    await query(
-      `UPDATE configuracion SET tiempo_anulacion = $1 WHERE id = 1`,
-      [minutos]
-    );
-    res.json({ ok: true, tiempo_anulacion: minutos });
-  } catch (err) {
-    console.error('Error actualizando tiempo_anulacion:', err);
-    res.status(500).json({ error: 'Error al guardar configuración' });
   }
 });
 
