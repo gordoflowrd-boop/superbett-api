@@ -376,6 +376,121 @@ router.get('/esquemas/pagos', async (req, res) => {
   }
 });
 
+
+// =============================================
+// ESQUEMAS — ESCRITURA
+// =============================================
+
+// POST /api/admin/esquemas/precios — crear nuevo esquema de precios
+router.post('/esquemas/precios', async (req, res) => {
+  const { nombre } = req.body;
+  if (!nombre) return res.status(400).json({ error: 'nombre es requerido' });
+  try {
+    const r = await query(
+      `INSERT INTO esquema_precios (nombre) VALUES ($1) RETURNING id, nombre, activo`,
+      [nombre.trim()]
+    );
+    res.status(201).json({ esquema: r.rows[0] });
+  } catch (err) {
+    console.error('Error crear esquema precios:', err);
+    res.status(500).json({ error: 'Error al crear esquema' });
+  }
+});
+
+// PUT /api/admin/esquemas/precios/:id/detalle — upsert línea de precio
+router.put('/esquemas/precios/:id/detalle', async (req, res) => {
+  const { modalidad, precio, loteria_id } = req.body;
+  if (!modalidad || precio === undefined) {
+    return res.status(400).json({ error: 'modalidad y precio son requeridos' });
+  }
+  try {
+    await query(
+      `INSERT INTO esquema_precios_detalle (esquema_id, modalidad, precio, loteria_id)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (esquema_id, loteria_id, modalidad) DO UPDATE
+         SET precio = EXCLUDED.precio`,
+      [req.params.id, modalidad, precio, loteria_id || null]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error upsert precio:', err);
+    res.status(500).json({ error: 'Error al guardar precio' });
+  }
+});
+
+// PATCH /api/admin/esquemas/precios/:id — renombrar o activar/desactivar
+router.patch('/esquemas/precios/:id', async (req, res) => {
+  const { nombre, activo } = req.body;
+  try {
+    await query(
+      `UPDATE esquema_precios SET
+         nombre = COALESCE($1, nombre),
+         activo = COALESCE($2, activo)
+       WHERE id = $3`,
+      [nombre || null, activo ?? null, req.params.id]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error patch esquema precios:', err);
+    res.status(500).json({ error: 'Error al actualizar esquema' });
+  }
+});
+
+// POST /api/admin/esquemas/pagos — crear nuevo esquema de pagos
+router.post('/esquemas/pagos', async (req, res) => {
+  const { nombre } = req.body;
+  if (!nombre) return res.status(400).json({ error: 'nombre es requerido' });
+  try {
+    const r = await query(
+      `INSERT INTO esquema_pagos (nombre) VALUES ($1) RETURNING id, nombre, activo`,
+      [nombre.trim()]
+    );
+    res.status(201).json({ esquema: r.rows[0] });
+  } catch (err) {
+    console.error('Error crear esquema pagos:', err);
+    res.status(500).json({ error: 'Error al crear esquema' });
+  }
+});
+
+// PUT /api/admin/esquemas/pagos/:id/detalle — upsert multiplicador
+router.put('/esquemas/pagos/:id/detalle', async (req, res) => {
+  const { modalidad, posicion, pago, loteria_id } = req.body;
+  if (!modalidad || posicion === undefined || pago === undefined) {
+    return res.status(400).json({ error: 'modalidad, posicion y pago son requeridos' });
+  }
+  try {
+    await query(
+      `INSERT INTO esquema_pagos_detalle (esquema_id, modalidad, posicion, pago, loteria_id)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (esquema_id, loteria_id, modalidad, posicion) DO UPDATE
+         SET pago = EXCLUDED.pago`,
+      [req.params.id, modalidad, posicion, pago, loteria_id || null]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error upsert pago:', err);
+    res.status(500).json({ error: 'Error al guardar multiplicador' });
+  }
+});
+
+// PATCH /api/admin/esquemas/pagos/:id — renombrar o activar/desactivar
+router.patch('/esquemas/pagos/:id', async (req, res) => {
+  const { nombre, activo } = req.body;
+  try {
+    await query(
+      `UPDATE esquema_pagos SET
+         nombre = COALESCE($1, nombre),
+         activo = COALESCE($2, activo)
+       WHERE id = $3`,
+      [nombre || null, activo ?? null, req.params.id]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error patch esquema pagos:', err);
+    res.status(500).json({ error: 'Error al actualizar esquema' });
+  }
+});
+
 // =============================================
 // CONFIGURACIÓN GLOBAL
 // =============================================
