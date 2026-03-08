@@ -331,6 +331,35 @@ router.patch('/loterias/:id', async (req, res) => {
   }
 });
 
+// PATCH /api/admin/loterias/:id/horario — actualizar horario y zona
+router.patch('/loterias/:id/horario', async (req, res) => {
+  const { hora_inicio, hora_cierre, zona_horaria } = req.body;
+  try {
+    // Actualizar zona_horaria en loterias
+    if (zona_horaria) {
+      await query(
+        `UPDATE loterias SET zona_horaria = $1 WHERE id = $2`,
+        [zona_horaria, req.params.id]
+      );
+    }
+    // Actualizar o insertar horario en loteria_horarios
+    if (hora_inicio || hora_cierre) {
+      await query(
+        `INSERT INTO loteria_horarios (loteria_id, hora_inicio, hora_cierre)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (loteria_id) DO UPDATE
+           SET hora_inicio = COALESCE($2, loteria_horarios.hora_inicio),
+               hora_cierre = COALESCE($3, loteria_horarios.hora_cierre)`,
+        [req.params.id, hora_inicio || null, hora_cierre || null]
+      );
+    }
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error patch horario loteria:', err);
+    res.status(500).json({ error: 'Error al actualizar horario' });
+  }
+});
+
 // =============================================
 // ESQUEMAS DE PRECIOS Y PAGOS
 // =============================================
@@ -508,18 +537,20 @@ router.get('/configuracion', async (req, res) => {
   }
 });
 
-// PUT /api/admin/configuracion
+// PUT /api/admin/configuracion — acepta cualquier clave del body
 router.put('/configuracion', async (req, res) => {
-  const { tiempo_anulacion } = req.body;
+  const claves = ['tiempo_anulacion', 'hora_jornada'];
   try {
-    if (tiempo_anulacion !== undefined) {
-      await query(
-        `INSERT INTO configuracion (clave, valor, updated_at)
-           VALUES ('tiempo_anulacion', $1, now())
-           ON CONFLICT (clave) DO UPDATE
-             SET valor = $1, updated_at = now()`,
-        [String(tiempo_anulacion)]
-      );
+    for (const clave of claves) {
+      if (req.body[clave] !== undefined) {
+        await query(
+          `INSERT INTO configuracion (clave, valor, updated_at)
+             VALUES ($1, $2, now())
+             ON CONFLICT (clave) DO UPDATE
+               SET valor = $2, updated_at = now()`,
+          [clave, String(req.body[clave])]
+        );
+      }
     }
     res.json({ estado: 'ok' });
   } catch (err) {
