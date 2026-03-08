@@ -463,13 +463,25 @@ router.put('/esquemas/precios/:id/detalle', async (req, res) => {
     return res.status(400).json({ error: 'modalidad y precio son requeridos' });
   }
   try {
-    await query(
-      `INSERT INTO esquema_precios_detalle (esquema_id, modalidad, precio, loteria_id)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (esquema_id, loteria_id, modalidad) DO UPDATE
-         SET precio = EXCLUDED.precio`,
-      [req.params.id, modalidad, precio, loteria_id || null]
-    );
+    if (loteria_id) {
+      // Caso específico por lotería — usa índice con loteria_id
+      await query(
+        `INSERT INTO esquema_precios_detalle (esquema_id, modalidad, precio, loteria_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (esquema_id, modalidad, loteria_id) WHERE loteria_id IS NOT NULL
+         DO UPDATE SET precio = EXCLUDED.precio`,
+        [req.params.id, modalidad, precio, loteria_id]
+      );
+    } else {
+      // Caso general sin lotería — usa índice parcial WHERE loteria_id IS NULL
+      await query(
+        `INSERT INTO esquema_precios_detalle (esquema_id, modalidad, precio, loteria_id)
+         VALUES ($1, $2, $3, NULL)
+         ON CONFLICT (esquema_id, modalidad) WHERE loteria_id IS NULL
+         DO UPDATE SET precio = EXCLUDED.precio`,
+        [req.params.id, modalidad, precio]
+      );
+    }
     res.json({ estado: 'ok' });
   } catch (err) {
     console.error('Error upsert precio:', err);
@@ -518,13 +530,25 @@ router.put('/esquemas/pagos/:id/detalle', async (req, res) => {
     return res.status(400).json({ error: 'modalidad, posicion y pago son requeridos' });
   }
   try {
-    await query(
-      `INSERT INTO esquema_pagos_detalle (esquema_id, modalidad, posicion, pago, loteria_id)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (esquema_id, loteria_id, modalidad, posicion) DO UPDATE
-         SET pago = EXCLUDED.pago`,
-      [req.params.id, modalidad, posicion, pago, loteria_id || null]
-    );
+    if (loteria_id) {
+      // Caso específico por lotería
+      await query(
+        `INSERT INTO esquema_pagos_detalle (esquema_id, modalidad, posicion, pago, loteria_id)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (esquema_id, modalidad, posicion, loteria_id) WHERE loteria_id IS NOT NULL
+         DO UPDATE SET pago = EXCLUDED.pago`,
+        [req.params.id, modalidad, posicion, pago, loteria_id]
+      );
+    } else {
+      // Caso general sin lotería
+      await query(
+        `INSERT INTO esquema_pagos_detalle (esquema_id, modalidad, posicion, pago, loteria_id)
+         VALUES ($1, $2, $3, $4, NULL)
+         ON CONFLICT (esquema_id, modalidad, posicion) WHERE loteria_id IS NULL
+         DO UPDATE SET pago = EXCLUDED.pago`,
+        [req.params.id, modalidad, posicion, pago]
+      );
+    }
     res.json({ estado: 'ok' });
   } catch (err) {
     console.error('Error upsert pago:', err);
