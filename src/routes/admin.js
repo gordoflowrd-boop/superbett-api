@@ -331,32 +331,58 @@ router.patch('/loterias/:id', async (req, res) => {
   }
 });
 
-// PATCH /api/admin/loterias/:id/horario — actualizar horario y zona
-router.patch('/loterias/:id/horario', async (req, res) => {
-  const { hora_inicio, hora_cierre, zona_horaria } = req.body;
+// GET /api/admin/loterias/:id/horarios — todos los horarios de una lotería
+router.get('/loterias/:id/horarios', async (req, res) => {
   try {
-    // Actualizar zona_horaria en loterias
-    if (zona_horaria) {
-      await query(
-        `UPDATE loterias SET zona_horaria = $1 WHERE id = $2`,
-        [zona_horaria, req.params.id]
-      );
-    }
-    // Actualizar o insertar horario en loteria_horarios
-    if (hora_inicio || hora_cierre) {
-      await query(
-        `INSERT INTO loteria_horarios (loteria_id, hora_inicio, hora_cierre)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (loteria_id) DO UPDATE
-           SET hora_inicio = COALESCE($2, loteria_horarios.hora_inicio),
-               hora_cierre = COALESCE($3, loteria_horarios.hora_cierre)`,
-        [req.params.id, hora_inicio || null, hora_cierre || null]
-      );
-    }
+    const r = await query(
+      `SELECT id, dia_semana, hora_inicio, hora_cierre
+       FROM loteria_horarios
+       WHERE loteria_id = $1
+       ORDER BY dia_semana NULLS FIRST`,
+      [req.params.id]
+    );
+    res.json({ horarios: r.rows });
+  } catch (err) {
+    console.error('Error get horarios:', err);
+    res.status(500).json({ error: 'Error al obtener horarios' });
+  }
+});
+
+// PUT /api/admin/loterias/:id/horarios — upsert horario de un día
+// body: { dia_semana: null|0-6, hora_inicio, hora_cierre }
+router.put('/loterias/:id/horarios', async (req, res) => {
+  const { dia_semana, hora_inicio, hora_cierre } = req.body;
+  if (!hora_inicio || !hora_cierre) {
+    return res.status(400).json({ error: 'hora_inicio y hora_cierre requeridos' });
+  }
+  try {
+    await query(
+      `INSERT INTO loteria_horarios (loteria_id, dia_semana, hora_inicio, hora_cierre)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (loteria_id, dia_semana) DO UPDATE
+         SET hora_inicio = $3, hora_cierre = $4`,
+      [req.params.id, dia_semana ?? null, hora_inicio, hora_cierre]
+    );
     res.json({ estado: 'ok' });
   } catch (err) {
-    console.error('Error patch horario loteria:', err);
-    res.status(500).json({ error: 'Error al actualizar horario' });
+    console.error('Error upsert horario:', err);
+    res.status(500).json({ error: 'Error al guardar horario' });
+  }
+});
+
+// PATCH /api/admin/loterias/:id/zona — actualizar zona horaria
+router.patch('/loterias/:id/zona', async (req, res) => {
+  const { zona_horaria } = req.body;
+  if (!zona_horaria) return res.status(400).json({ error: 'zona_horaria requerida' });
+  try {
+    await query(
+      `UPDATE loterias SET zona_horaria = $1 WHERE id = $2`,
+      [zona_horaria, req.params.id]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error patch zona:', err);
+    res.status(500).json({ error: 'Error al actualizar zona' });
   }
 });
 
