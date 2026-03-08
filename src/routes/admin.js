@@ -257,9 +257,13 @@ router.patch('/bancas/:id', async (req, res) => {
 router.get('/loterias', async (req, res) => {
   try {
     const result = await query(
-      `SELECT l.*, lh.hora_inicio, lh.hora_cierre
+      `SELECT l.*,
+              lh.hora_inicio,
+              lh.hora_cierre
        FROM loterias l
-       LEFT JOIN loteria_horarios lh ON lh.loteria_id = l.id
+       LEFT JOIN loteria_horarios lh
+         ON lh.loteria_id = l.id
+         AND lh.dia_semana IS NULL   -- solo el horario defecto
        ORDER BY l.orden, l.nombre`
     );
     res.json({ loterias: result.rows });
@@ -287,9 +291,9 @@ router.post('/loterias', async (req, res) => {
 
     if (hora_inicio && hora_cierre) {
       await query(
-        `INSERT INTO loteria_horarios (loteria_id, hora_inicio, hora_cierre)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (loteria_id) DO UPDATE
+        `INSERT INTO loteria_horarios (loteria_id, hora_inicio, hora_cierre, dia_semana)
+         VALUES ($1, $2, $3, NULL)
+         ON CONFLICT (loteria_id, dia_semana) DO UPDATE
            SET hora_inicio = $2, hora_cierre = $3`,
         [loteria_id, hora_inicio, hora_cierre]
       );
