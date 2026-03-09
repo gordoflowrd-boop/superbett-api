@@ -593,13 +593,15 @@ router.patch('/esquemas/pagos/:id', async (req, res) => {
 // GET /api/admin/configuracion
 router.get('/configuracion', async (req, res) => {
   try {
+    console.log('GET /configuracion - usuario:', req.usuario?.id, req.usuario?.rol);
     const result = await query(`SELECT clave, valor FROM configuracion`);
+    console.log('GET /configuracion - rows:', result.rows.length);
     const config = {};
     result.rows.forEach(r => { config[r.clave] = r.valor; });
     res.json({ config });
   } catch (err) {
-    console.error('Error leer configuracion:', err);
-    res.status(500).json({ error: 'Error al leer configuración' });
+    console.error('Error leer configuracion DETALLE:', err.message, err.code);
+    res.status(500).json({ error: err.message });
   }
 });
 
