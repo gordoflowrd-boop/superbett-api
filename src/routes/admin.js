@@ -5,7 +5,7 @@ const { authMiddleware, requireRol } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Middleware de autenticación y autorización
+// Middleware de autenticación y autorización actualizado
 router.use(authMiddleware);
 router.use(requireRol('admin', 'central'));
 
@@ -71,13 +71,16 @@ router.post('/usuarios', async (req, res) => {
 router.patch('/usuarios/:id', async (req, res) => {
   const { nombre, username, rol, activo, password, password_actual } = req.body;
   const { id } = req.params;
-  const esPropio = String(req.usuario.id) === String(id);
+  const esPropio = String(req.usuario.id) === String(id); // Admin editando su propia cuenta
 
   try {
+    // ── Cambio de contraseña ────────────────────────────
     if (password) {
       if (password.length < 6) {
         return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
       }
+
+      // Si es su propia cuenta, verificar contraseña actual
       if (esPropio) {
         if (!password_actual) {
           return res.status(400).json({ error: 'Debes ingresar tu contraseña actual' });
@@ -88,10 +91,12 @@ router.patch('/usuarios/:id', async (req, res) => {
           return res.status(401).json({ error: 'Contraseña actual incorrecta' });
         }
       }
+
       const hash = await bcrypt.hash(password, 10);
       await query('UPDATE usuarios SET password = $1, updated_at = now() WHERE id = $2', [hash, id]);
     }
 
+    // ── Verificar username único ────────────────────────
     if (username !== undefined) {
       const existe = await query(
         'SELECT id FROM usuarios WHERE username = $1 AND id != $2',
@@ -102,7 +107,9 @@ router.patch('/usuarios/:id', async (req, res) => {
       }
     }
 
+    // ── Actualizar datos ────────────────────────────────
     if (nombre !== undefined || username !== undefined || rol !== undefined || activo !== undefined) {
+      // Usar valores directos: si viene definido se usa, si no se usa COALESCE para mantener el actual
       const nombreVal   = nombre   !== undefined ? (nombre.trim()   || null)                    : null;
       const usernameVal = username !== undefined ? (username.trim().toLowerCase() || null)       : null;
       const rolVal      = rol      !== undefined ? (rol              || null)                    : null;
@@ -127,12 +134,14 @@ router.patch('/usuarios/:id', async (req, res) => {
   }
 });
 
-// POST /api/admin/usuarios/:id/bancas
+// POST /api/admin/usuarios/:id/bancas — asignar comisión usuario-banca
 router.post('/usuarios/:id/bancas', async (req, res) => {
   const { banca_id, modalidad, porcentaje_bruto, porcentaje_neto } = req.body;
+
   if (!banca_id || !modalidad) {
     return res.status(400).json({ error: 'banca_id y modalidad son requeridos' });
   }
+
   try {
     await query(
       `INSERT INTO usuarios_bancas (usuario_id, banca_id, modalidad, porcentaje_bruto, porcentaje_neto)
@@ -254,7 +263,7 @@ router.get('/loterias', async (req, res) => {
        FROM loterias l
        LEFT JOIN loteria_horarios lh
          ON lh.loteria_id = l.id
-         AND lh.dia_semana IS NULL
+         AND lh.dia_semana IS NULL   -- solo el horario defecto
        ORDER BY l.orden, l.nombre`
     );
     res.json({ loterias: result.rows });
@@ -266,118 +275,138 @@ router.get('/loterias', async (req, res) => {
 // POST /api/admin/loterias
 router.post('/loterias', async (req, res) => {
   const { nombre, codigo, zona_horaria, orden, hora_inicio, hora_cierre } = req.body;
-  if (!nombre || !codigo) return res.status(400).json({ error: 'nombre y codigo son requeridos' });
+
+  if (!nombre || !codigo) {
+    return res.status(400).json({ error: 'nombre y codigo son requeridos' });
+  }
 
   try {
     const lot = await query(
       `INSERT INTO loterias (nombre, codigo, zona_horaria, orden)
        VALUES ($1, $2, $3, $4) RETURNING id`,
-      [nombre, codigo.toUpperCase(), zona_horaria || 'America/Santo_Domingo', orden || 0]
+      [nombre, codigo.toUpperCase(),
+       zona_horaria || 'America/Santo_Domingo', orden || 0]
     );
     const loteria_id = lot.rows[0].id;
 
-    if (hora_inicio && hora_cierre) {
-      await query(
-        `INSERT INTO loteria_horarios (loteria_id, hora_inicio, hora_cierre, dia_semana)
-         VALUES ($1, $2, $3, NULL)
-         ON CONFLICT (loteria_id, dia_semana) DO UPDATE
-           SET hora_inicio = $2, hora_cierre = $3`,
-        [loteria_id, hora_inicio, hora_cierre]
-      );
-    }
+    // Siempre insertar horario defecto (NULL = aplica todos los días)
+    await query(
+      `INSERT INTO loteria_horarios (loteria_id, hora_inicio, hora_cierre, dia_semana)
+       VALUES ($1, $2, $3, NULL)
+       ON CONFLICT DO NOTHING`,
+      [loteria_id,
+       hora_inicio || '07:30',
+       hora_cierre || '23:59']
+    );
+
     res.status(201).json({ estado: 'ok', id: loteria_id });
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'El código de lotería ya existe' });
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'El código de lotería ya existe' });
+    }
+    console.error('Error crear lotería:', err);
     res.status(500).json({ error: 'Error al crear lotería' });
   }
 });
 
-// =============================================
-// ESQUEMAS — ESCRITURA (CORREGIDO: DELETE + INSERT)
-// =============================================
-
-// 1. ARREGLAR PRECIOS
-router.put('/esquemas/precios/:id/detalle', async (req, res) => {
-  const { modalidad, precio, loteria_id } = req.body;
-
-  if (!modalidad || precio === undefined) {
-    return res.status(400).json({ error: 'modalidad y precio son requeridos' });
-  }
-
+// PATCH /api/admin/loterias/:id — actualizar límites generales por número
+router.patch('/loterias/:id', async (req, res) => {
+  const { limite_q, limite_p, limite_t, limite_sp } = req.body;
   try {
-    if (loteria_id) {
+    await query(
+      `UPDATE loterias
+          SET limite_q  = $1,
+              limite_p  = $2,
+              limite_t  = $3,
+              limite_sp = $4
+        WHERE id = $5`,
+      [
+        limite_q  ?? null,
+        limite_p  ?? null,
+        limite_t  ?? null,
+        limite_sp ?? null,
+        req.params.id,
+      ]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error patch loterias:', err);
+    res.status(500).json({ error: 'Error al actualizar límites' });
+  }
+});
+
+// GET /api/admin/loterias/:id/horarios — todos los horarios de una lotería
+router.get('/loterias/:id/horarios', async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT id, dia_semana, hora_inicio, hora_cierre
+       FROM loteria_horarios
+       WHERE loteria_id = $1
+       ORDER BY dia_semana NULLS FIRST`,
+      [req.params.id]
+    );
+    res.json({ horarios: r.rows });
+  } catch (err) {
+    console.error('Error get horarios:', err);
+    res.status(500).json({ error: 'Error al obtener horarios' });
+  }
+});
+
+// PUT /api/admin/loterias/:id/horarios — upsert horario de un día
+// body: { dia_semana: null|0-6, hora_inicio, hora_cierre }
+router.put('/loterias/:id/horarios', async (req, res) => {
+  const { dia_semana, hora_inicio, hora_cierre } = req.body;
+  if (!hora_inicio || !hora_cierre) {
+    return res.status(400).json({ error: 'hora_inicio y hora_cierre requeridos' });
+  }
+  try {
+    if (dia_semana === null || dia_semana === undefined) {
+      // Defecto — usa índice parcial WHERE dia_semana IS NULL
       await query(
-        `DELETE FROM esquema_precios_detalle
-         WHERE esquema_id = $1 AND modalidad = $2 AND loteria_id = $3`,
-        [req.params.id, modalidad, loteria_id]
-      );
-      await query(
-        `INSERT INTO esquema_precios_detalle (esquema_id, modalidad, precio, loteria_id)
-         VALUES ($1, $2, $3, $4)`,
-        [req.params.id, modalidad, precio, loteria_id]
+        `INSERT INTO loteria_horarios (loteria_id, dia_semana, hora_inicio, hora_cierre)
+         VALUES ($1, NULL, $2, $3)
+         ON CONFLICT (loteria_id) WHERE dia_semana IS NULL
+         DO UPDATE SET hora_inicio = $2, hora_cierre = $3`,
+        [req.params.id, hora_inicio, hora_cierre]
       );
     } else {
+      // Día específico — usa índice parcial WHERE dia_semana IS NOT NULL
       await query(
-        `DELETE FROM esquema_precios_detalle
-         WHERE esquema_id = $1 AND modalidad = $2 AND loteria_id IS NULL`,
-        [req.params.id, modalidad]
-      );
-      await query(
-        `INSERT INTO esquema_precios_detalle (esquema_id, modalidad, precio, loteria_id)
-         VALUES ($1, $2, $3, NULL)`,
-        [req.params.id, modalidad, precio]
+        `INSERT INTO loteria_horarios (loteria_id, dia_semana, hora_inicio, hora_cierre)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (loteria_id, dia_semana) WHERE dia_semana IS NOT NULL
+         DO UPDATE SET hora_inicio = $3, hora_cierre = $4`,
+        [req.params.id, dia_semana, hora_inicio, hora_cierre]
       );
     }
     res.json({ estado: 'ok' });
   } catch (err) {
-    console.error('Error guardar precio:', err);
-    res.status(500).json({ error: 'Error al guardar precio' });
+    console.error('Error upsert horario:', err);
+    res.status(500).json({ error: 'Error al guardar horario' });
   }
 });
 
-// 2. ARREGLAR PAGOS
-router.put('/esquemas/pagos/:id/detalle', async (req, res) => {
-  const { modalidad, posicion, pago, loteria_id } = req.body;
-
-  if (!modalidad || posicion === undefined || pago === undefined) {
-    return res.status(400).json({ error: 'modalidad, posicion y pago son requeridos' });
-  }
-
+// PATCH /api/admin/loterias/:id/zona — actualizar zona horaria
+router.patch('/loterias/:id/zona', async (req, res) => {
+  const { zona_horaria } = req.body;
+  if (!zona_horaria) return res.status(400).json({ error: 'zona_horaria requerida' });
   try {
-    if (loteria_id) {
-      await query(
-        `DELETE FROM esquema_pagos_detalle
-         WHERE esquema_id = $1 AND modalidad = $2 AND posicion = $3 AND loteria_id = $4`,
-        [req.params.id, modalidad, posicion, loteria_id]
-      );
-      await query(
-        `INSERT INTO esquema_pagos_detalle (esquema_id, modalidad, posicion, pago, loteria_id)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [req.params.id, modalidad, posicion, pago, loteria_id]
-      );
-    } else {
-      await query(
-        `DELETE FROM esquema_pagos_detalle
-         WHERE esquema_id = $1 AND modalidad = $2 AND posicion = $3 AND loteria_id IS NULL`,
-        [req.params.id, modalidad, posicion]
-      );
-      await query(
-        `INSERT INTO esquema_pagos_detalle (esquema_id, modalidad, posicion, pago, loteria_id)
-         VALUES ($1, $2, $3, $4, NULL)`,
-        [req.params.id, modalidad, posicion, pago]
-      );
-    }
+    await query(
+      `UPDATE loterias SET zona_horaria = $1 WHERE id = $2`,
+      [zona_horaria, req.params.id]
+    );
     res.json({ estado: 'ok' });
   } catch (err) {
-    console.error('Error guardar multiplicador:', err);
-    res.status(500).json({ error: 'Error al guardar multiplicador' });
+    console.error('Error patch zona:', err);
+    res.status(500).json({ error: 'Error al actualizar zona' });
   }
 });
 
 // =============================================
-// CONTINUACIÓN DE RUTAS EXISTENTES
+// ESQUEMAS DE PRECIOS Y PAGOS
 // =============================================
 
+// GET /api/admin/esquemas/precios
 router.get('/esquemas/precios', async (req, res) => {
   try {
     const result = await query(
@@ -397,6 +426,7 @@ router.get('/esquemas/precios', async (req, res) => {
   }
 });
 
+// GET /api/admin/esquemas/pagos
 router.get('/esquemas/pagos', async (req, res) => {
   try {
     const result = await query(
@@ -417,28 +447,150 @@ router.get('/esquemas/pagos', async (req, res) => {
   }
 });
 
+
+// =============================================
+// ESQUEMAS — ESCRITURA
+// =============================================
+
+// POST /api/admin/esquemas/precios — crear nuevo esquema de precios
 router.post('/esquemas/precios', async (req, res) => {
   const { nombre } = req.body;
   if (!nombre) return res.status(400).json({ error: 'nombre es requerido' });
   try {
-    const r = await query(`INSERT INTO esquema_precios (nombre) VALUES ($1) RETURNING id, nombre, activo`, [nombre.trim()]);
+    const r = await query(
+      `INSERT INTO esquema_precios (nombre) VALUES ($1) RETURNING id, nombre, activo`,
+      [nombre.trim()]
+    );
     res.status(201).json({ esquema: r.rows[0] });
   } catch (err) {
+    console.error('Error crear esquema precios:', err);
     res.status(500).json({ error: 'Error al crear esquema' });
   }
 });
 
+// PUT /api/admin/esquemas/precios/:id/detalle — upsert línea de precio
+router.put('/esquemas/precios/:id/detalle', async (req, res) => {
+  const { modalidad, precio, loteria_id } = req.body;
+  if (!modalidad || precio === undefined) {
+    return res.status(400).json({ error: 'modalidad y precio son requeridos' });
+  }
+  try {
+    if (loteria_id) {
+      // Caso específico por lotería — usa índice con loteria_id
+      await query(
+        `INSERT INTO esquema_precios_detalle (esquema_id, modalidad, precio, loteria_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (esquema_id, modalidad, loteria_id) WHERE loteria_id IS NOT NULL
+         DO UPDATE SET precio = EXCLUDED.precio`,
+        [req.params.id, modalidad, precio, loteria_id]
+      );
+    } else {
+      // Caso general sin lotería — usa índice parcial WHERE loteria_id IS NULL
+      await query(
+        `INSERT INTO esquema_precios_detalle (esquema_id, modalidad, precio, loteria_id)
+         VALUES ($1, $2, $3, NULL)
+         ON CONFLICT (esquema_id, modalidad) WHERE loteria_id IS NULL
+         DO UPDATE SET precio = EXCLUDED.precio`,
+        [req.params.id, modalidad, precio]
+      );
+    }
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error upsert precio:', err);
+    res.status(500).json({ error: 'Error al guardar precio' });
+  }
+});
+
+// PATCH /api/admin/esquemas/precios/:id — renombrar o activar/desactivar
+router.patch('/esquemas/precios/:id', async (req, res) => {
+  const { nombre, activo } = req.body;
+  try {
+    await query(
+      `UPDATE esquema_precios SET
+         nombre = COALESCE($1, nombre),
+         activo = COALESCE($2, activo)
+       WHERE id = $3`,
+      [nombre || null, activo ?? null, req.params.id]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error patch esquema precios:', err);
+    res.status(500).json({ error: 'Error al actualizar esquema' });
+  }
+});
+
+// POST /api/admin/esquemas/pagos — crear nuevo esquema de pagos
 router.post('/esquemas/pagos', async (req, res) => {
   const { nombre } = req.body;
   if (!nombre) return res.status(400).json({ error: 'nombre es requerido' });
   try {
-    const r = await query(`INSERT INTO esquema_pagos (nombre) VALUES ($1) RETURNING id, nombre, activo`, [nombre.trim()]);
+    const r = await query(
+      `INSERT INTO esquema_pagos (nombre) VALUES ($1) RETURNING id, nombre, activo`,
+      [nombre.trim()]
+    );
     res.status(201).json({ esquema: r.rows[0] });
   } catch (err) {
+    console.error('Error crear esquema pagos:', err);
     res.status(500).json({ error: 'Error al crear esquema' });
   }
 });
 
+// PUT /api/admin/esquemas/pagos/:id/detalle — upsert multiplicador
+router.put('/esquemas/pagos/:id/detalle', async (req, res) => {
+  const { modalidad, posicion, pago, loteria_id } = req.body;
+  if (!modalidad || posicion === undefined || pago === undefined) {
+    return res.status(400).json({ error: 'modalidad, posicion y pago son requeridos' });
+  }
+  try {
+    if (loteria_id) {
+      // Caso específico por lotería
+      await query(
+        `INSERT INTO esquema_pagos_detalle (esquema_id, modalidad, posicion, pago, loteria_id)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (esquema_id, modalidad, posicion, loteria_id) WHERE loteria_id IS NOT NULL
+         DO UPDATE SET pago = EXCLUDED.pago`,
+        [req.params.id, modalidad, posicion, pago, loteria_id]
+      );
+    } else {
+      // Caso general sin lotería
+      await query(
+        `INSERT INTO esquema_pagos_detalle (esquema_id, modalidad, posicion, pago, loteria_id)
+         VALUES ($1, $2, $3, $4, NULL)
+         ON CONFLICT (esquema_id, modalidad, posicion) WHERE loteria_id IS NULL
+         DO UPDATE SET pago = EXCLUDED.pago`,
+        [req.params.id, modalidad, posicion, pago]
+      );
+    }
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error upsert pago:', err);
+    res.status(500).json({ error: 'Error al guardar multiplicador' });
+  }
+});
+
+// PATCH /api/admin/esquemas/pagos/:id — renombrar o activar/desactivar
+router.patch('/esquemas/pagos/:id', async (req, res) => {
+  const { nombre, activo } = req.body;
+  try {
+    await query(
+      `UPDATE esquema_pagos SET
+         nombre = COALESCE($1, nombre),
+         activo = COALESCE($2, activo)
+       WHERE id = $3`,
+      [nombre || null, activo ?? null, req.params.id]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error patch esquema pagos:', err);
+    res.status(500).json({ error: 'Error al actualizar esquema' });
+  }
+});
+
+// =============================================
+// CONFIGURACIÓN GLOBAL
+// =============================================
+
+// GET /api/admin/configuracion
 router.get('/configuracion', async (req, res) => {
   try {
     const result = await query(`SELECT clave, valor FROM configuracion`);
@@ -446,10 +598,12 @@ router.get('/configuracion', async (req, res) => {
     result.rows.forEach(r => { config[r.clave] = r.valor; });
     res.json({ config });
   } catch (err) {
+    console.error('Error leer configuracion:', err);
     res.status(500).json({ error: 'Error al leer configuración' });
   }
 });
 
+// PUT /api/admin/configuracion — acepta cualquier clave del body
 router.put('/configuracion', async (req, res) => {
   const claves = ['tiempo_anulacion', 'hora_jornada'];
   try {
@@ -458,14 +612,28 @@ router.put('/configuracion', async (req, res) => {
         await query(
           `INSERT INTO configuracion (clave, valor, updated_at)
              VALUES ($1, $2, now())
-             ON CONFLICT (clave) DO UPDATE SET valor = $2, updated_at = now()`,
+             ON CONFLICT (clave) DO UPDATE
+               SET valor = $2, updated_at = now()`,
           [clave, String(req.body[clave])]
         );
       }
     }
     res.json({ estado: 'ok' });
   } catch (err) {
+    console.error('Error guardar configuracion:', err);
     res.status(500).json({ error: 'Error al guardar configuración' });
+  }
+});
+
+// POST /api/admin/jornadas/generar — forzar generación manual de jornadas
+router.post('/jornadas/generar', async (req, res) => {
+  try {
+    const result = await query('SELECT generar_jornadas()');
+    const data = result.rows[0].generar_jornadas;
+    res.json({ estado: 'ok', data });
+  } catch (err) {
+    console.error('Error generar jornadas:', err);
+    res.status(500).json({ error: 'Error al generar jornadas' });
   }
 });
 
