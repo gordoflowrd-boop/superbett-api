@@ -593,15 +593,18 @@ router.patch('/esquemas/pagos/:id', async (req, res) => {
 // GET /api/admin/configuracion
 router.get('/configuracion', async (req, res) => {
   try {
-    console.log('GET /configuracion - usuario:', req.usuario?.id, req.usuario?.rol);
     const result = await query(`SELECT clave, valor FROM configuracion`);
-    console.log('GET /configuracion - rows:', result.rows.length);
     const config = {};
-    result.rows.forEach(r => { config[r.clave] = r.valor; });
-    res.json({ config });
+    for (const row of result.rows) {
+      config[row.clave] = row.valor;
+    }
+    // Valores por defecto si no existen en BD
+    if (config.tiempo_anulacion === undefined) config.tiempo_anulacion = '0';
+    if (config.hora_jornada     === undefined) config.hora_jornada     = '2';
+    res.json({ estado: 'ok', config });
   } catch (err) {
-    console.error('Error leer configuracion DETALLE:', err.message, err.code);
-    res.status(500).json({ error: err.message });
+    console.error('CONFIG ERROR:', err);
+    res.status(500).json({ estado: 'error', error: err.message });
   }
 });
 
