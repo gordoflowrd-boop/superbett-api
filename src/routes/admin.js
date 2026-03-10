@@ -172,6 +172,21 @@ router.get('/loterias', async (req, res) => {
   }
 });
 
+router.get('/loterias/:id/horarios', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT dia_semana, hora_inicio, hora_cierre
+       FROM loteria_horarios
+       WHERE loteria_id = $1 AND dia_semana IS NOT NULL
+       ORDER BY dia_semana`,
+      [req.params.id]
+    );
+    res.json({ horarios: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener horarios' });
+  }
+});
+
 router.put('/loterias/:id/horarios', async (req, res) => {
   const { dia_semana, hora_inicio, hora_cierre } = req.body;
   try {
@@ -330,16 +345,33 @@ router.put('/esquemas/pagos/:id/detalle', async (req, res) => {
     return res.status(400).json({ error: 'modalidad, posicion y pago son requeridos' });
   }
   try {
-    const conflictClause = loteria_id
-      ? '(esquema_id, modalidad, posicion, loteria_id) WHERE loteria_id IS NOT NULL'
-      : '(esquema_id, modalidad, posicion) WHERE loteria_id IS NULL';
-
-    await query(
-      `INSERT INTO esquema_pagos_detalle (esquema_id, modalidad, posicion, pago, loteria_id)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT ${conflictClause} DO UPDATE SET pago = EXCLUDED.pago`,
-      [req.params.id, modalidad, posicion, pago, loteria_id || null]
-    );
+    if (loteria_id) {
+      await query(
+        `INSERT INTO esquema_pagos_detalle (esquema_id, modalidad, posicion, pago, loteria_id)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (esquema_id, loteria_id, modalidad, posicion) WHERE loteria_id IS NOT NULL
+         DO UPDATE SET pago = EXCLUDED.pago`,
+        [req.params.id, modalidad, posicion, pago, loteria_id]
+      );
+    } else {
+      // Para loteria_id NULL usamos UPDATE + INSERT manual porque ON CONFLICT no funciona con NULLs
+      const existing = await query(
+        `SELECT id FROM esquema_pagos_detalle WHERE esquema_id = $1 AND modalidad = $2 AND posicion = $3 AND loteria_id IS NULL`,
+        [req.params.id, modalidad, posicion]
+      );
+      if (existing.rows.length > 0) {
+        await query(
+          `UPDATE esquema_pagos_detalle SET pago = $1 WHERE id = $2`,
+          [pago, existing.rows[0].id]
+        );
+      } else {
+        await query(
+          `INSERT INTO esquema_pagos_detalle (esquema_id, modalidad, posicion, pago, loteria_id)
+           VALUES ($1, $2, $3, $4, NULL)`,
+          [req.params.id, modalidad, posicion, pago]
+        );
+      }
+    }
     res.json({ estado: 'ok' });
   } catch (err) {
     console.error('Error al guardar multiplicador:', err);
