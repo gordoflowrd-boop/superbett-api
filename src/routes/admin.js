@@ -277,4 +277,74 @@ router.post('/jornadas/generar', async (req, res) => {
   }
 });
 
+
+// GET Esquemas de Pagos
+router.get('/esquemas/pagos', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT ep.*, 
+       COALESCE(jsonb_agg(epd.* ORDER BY epd.modalidad, epd.posicion) FILTER (WHERE epd.id IS NOT NULL), '[]') as detalle
+       FROM esquema_pagos ep
+       LEFT JOIN esquema_pagos_detalle epd ON ep.id = epd.esquema_id
+       GROUP BY ep.id ORDER BY ep.nombre`
+    );
+    res.json({ esquemas: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener esquemas de pagos' });
+  }
+});
+
+// POST Crear Esquema de Pago
+router.post('/esquemas/pagos', async (req, res) => {
+  const { nombre } = req.body;
+  if (!nombre) return res.status(400).json({ error: 'Nombre requerido' });
+  try {
+    const result = await query(
+      `INSERT INTO esquema_pagos (nombre) VALUES ($1) RETURNING *`,
+      [nombre]
+    );
+    res.status(201).json({ esquema: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al crear esquema de pago' });
+  }
+});
+
+// PATCH Renombrar Esquema de Pago
+router.patch('/esquemas/pagos/:id', async (req, res) => {
+  const { nombre } = req.body;
+  try {
+    await query(
+      `UPDATE esquema_pagos SET nombre = $1, updated_at = now() WHERE id = $2`,
+      [nombre, req.params.id]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al renombrar esquema de pago' });
+  }
+});
+
+// PUT Detalle de Pago (multiplicador por modalidad y posición)
+router.put('/esquemas/pagos/:id/detalle', async (req, res) => {
+  const { modalidad, posicion, pago, loteria_id } = req.body;
+  if (!modalidad || posicion === undefined || pago === undefined) {
+    return res.status(400).json({ error: 'modalidad, posicion y pago son requeridos' });
+  }
+  try {
+    const conflictClause = loteria_id
+      ? '(esquema_id, modalidad, posicion, loteria_id) WHERE loteria_id IS NOT NULL'
+      : '(esquema_id, modalidad, posicion) WHERE loteria_id IS NULL';
+
+    await query(
+      `INSERT INTO esquema_pagos_detalle (esquema_id, modalidad, posicion, pago, loteria_id)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT ${conflictClause} DO UPDATE SET pago = EXCLUDED.pago`,
+      [req.params.id, modalidad, posicion, pago, loteria_id || null]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error al guardar multiplicador:', err);
+    res.status(500).json({ error: 'Error al guardar multiplicador' });
+  }
+});
+
 module.exports = router;
