@@ -181,8 +181,7 @@ router.patch('/loterias/:id', async (req, res) => {
          limite_q  = $1,
          limite_p  = $2,
          limite_t  = $3,
-         limite_sp = $4,
-         updated_at = now()
+         limite_sp = $4
        WHERE id = $5`,
       [
         limite_q  ?? null,
@@ -195,7 +194,7 @@ router.patch('/loterias/:id', async (req, res) => {
     res.json({ estado: 'ok' });
   } catch (err) {
     console.error('Error al guardar límites:', err);
-    res.status(500).json({ error: 'Error al guardar límites' });
+    res.status(500).json({ error: err.message || 'Error al guardar límites' });
   }
 });
 
