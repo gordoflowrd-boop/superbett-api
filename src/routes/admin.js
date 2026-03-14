@@ -154,6 +154,21 @@ router.patch('/bancas/:id', async (req, res) => {
   }
 });
 
+// PUT /api/admin/bancas/:id/ip — configurar IP permitida
+router.put('/bancas/:id/ip', async (req, res) => {
+  const { ip_config } = req.body;
+  try {
+    await query(
+      `UPDATE bancas SET ip_config = $1, updated_at = now() WHERE id = $2`,
+      [ip_config?.trim() || null, req.params.id]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    console.error('Error actualizar ip_config:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // =============================================
 // 3. LOTERÍAS Y HORARIOS
 // =============================================
