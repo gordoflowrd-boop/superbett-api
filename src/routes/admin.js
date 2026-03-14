@@ -112,15 +112,44 @@ router.post('/usuarios/:id/bancas', async (req, res) => {
 router.get('/bancas', async (req, res) => {
   try {
     const result = await query(
-      `SELECT b.*, ep.nombre AS esquema_precio, epg.nombre AS esquema_pago
+      `SELECT b.*, ep.nombre AS esquema_precio, epg.nombre AS esquema_pago,
+              u.id AS rifero_id, u.username AS rifero_username, u.nombre AS rifero_nombre
        FROM bancas b
-       LEFT JOIN esquema_precios ep ON ep.id = b.esquema_precio_id
-       LEFT JOIN esquema_pagos epg ON epg.id = b.esquema_pago_id
+       LEFT JOIN esquema_precios ep  ON ep.id  = b.esquema_precio_id
+       LEFT JOIN esquema_pagos   epg ON epg.id = b.esquema_pago_id
+       LEFT JOIN usuarios        u   ON u.id   = b.rifero_id
        ORDER BY b.nombre`
     );
     res.json({ bancas: result.rows });
   } catch (err) {
     res.status(500).json({ error: 'Error al obtener bancas' });
+  }
+});
+
+// GET /api/admin/riferos — lista usuarios con rol rifero para selector
+router.get('/riferos', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, username, nombre FROM usuarios
+       WHERE rol = 'rifero' AND activo = true ORDER BY username`
+    );
+    res.json({ riferos: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener riferos' });
+  }
+});
+
+// PUT /api/admin/bancas/:id/rifero — asignar rifero por defecto
+router.put('/bancas/:id/rifero', async (req, res) => {
+  const { rifero_id } = req.body;
+  try {
+    await query(
+      `UPDATE bancas SET rifero_id = $1, updated_at = now() WHERE id = $2`,
+      [rifero_id || null, req.params.id]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
