@@ -8,22 +8,21 @@ const router = express.Router();
 
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, banca_id } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
   }
 
+  // banca_id es obligatorio — viene del SetupPage guardado en SharedPreferences
+  if (!banca_id) {
+    return res.status(400).json({ error: 'Configuración de banca no encontrada' });
+  }
+
   try {
+    // 1. Buscar usuario
     const result = await query(
-      `SELECT u.id, u.username, u.password, u.nombre, u.rol, u.activo,
-              ub.banca_id
-       FROM usuarios u
-       LEFT JOIN (
-         SELECT DISTINCT ON (usuario_id) usuario_id, banca_id
-         FROM usuarios_bancas ORDER BY usuario_id
-       ) ub ON ub.usuario_id = u.id
-       WHERE u.username = $1`,
+      `SELECT id, username, password, nombre, rol, activo FROM usuarios WHERE username = $1`,
       [username.trim().toLowerCase()]
     );
 
@@ -42,12 +41,33 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
+    // 2. Verificar que el usuario tiene acceso a esta banca específica
+    //    Admin y central pueden entrar a cualquier banca
+    if (!['admin', 'central'].includes(usuario.rol)) {
+      const acceso = await query(
+        `SELECT 1 FROM usuarios_bancas WHERE usuario_id = $1 AND banca_id = $2 LIMIT 1`,
+        [usuario.id, banca_id]
+      );
+      if (!acceso.rows.length) {
+        return res.status(403).json({
+          error: 'No tienes acceso a esta banca'
+        });
+      }
+    }
+
+    // 3. Obtener nombre de la banca
+    const bancaRes = await query(
+      `SELECT nombre, nombre_ticket FROM bancas WHERE id = $1`,
+      [banca_id]
+    );
+    const banca = bancaRes.rows[0];
+
     const payload = {
       id:       usuario.id,
       username: usuario.username,
       nombre:   usuario.nombre,
       rol:      usuario.rol,
-      banca_id: usuario.banca_id || null,
+      banca_id: banca_id,
     };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
@@ -56,7 +76,11 @@ router.post('/login', async (req, res) => {
 
     res.json({
       token,
-      usuario: payload,
+      usuario: {
+        ...payload,
+        banca_nombre: banca?.nombre ?? '',
+        banca_nombre_ticket: banca?.nombre_ticket ?? '',
+      },
     });
 
   } catch (err) {
@@ -65,7 +89,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// GET /api/auth/me — info del usuario autenticado
+// GET /api/auth/me
 router.get('/me', authMiddleware, (req, res) => {
   res.json({ usuario: req.usuario });
 });
