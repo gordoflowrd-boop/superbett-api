@@ -22,74 +22,79 @@ router.post('/login', async (req, res) => {
     );
 
     const usuario = result.rows[0];
-
-    if (!usuario) {
-      return res.status(401).json({ error: 'Credenciales inválidas' });
-    }
-
-    if (!usuario.activo) {
-      return res.status(401).json({ error: 'Usuario desactivado' });
-    }
+    if (!usuario) return res.status(401).json({ error: 'Credenciales inválidas' });
+    if (!usuario.activo) return res.status(401).json({ error: 'Usuario desactivado' });
 
     const passwordOk = await bcrypt.compare(password, usuario.password);
-    if (!passwordOk) {
-      return res.status(401).json({ error: 'Credenciales inválidas' });
-    }
+    if (!passwordOk) return res.status(401).json({ error: 'Credenciales inválidas' });
 
-    // 2. Admin y central: no necesitan banca_id
+    // 2. Admin y central — no necesitan banca
     if (['admin', 'central'].includes(usuario.rol)) {
       const payload = {
-        id:       usuario.id,
-        username: usuario.username,
-        nombre:   usuario.nombre,
-        rol:      usuario.rol,
-        banca_id: null,
+        id: usuario.id, username: usuario.username,
+        nombre: usuario.nombre, rol: usuario.rol, banca_id: null,
       };
-      const token = jwt.sign(payload, process.env.JWT_SECRET, {
-        expiresIn: process.env.JWT_EXPIRES_IN || '8h',
-      });
+      const token = jwt.sign(payload, process.env.JWT_SECRET,
+        { expiresIn: process.env.JWT_EXPIRES_IN || '8h' });
       return res.json({ token, usuario: payload });
     }
 
-    // 3. Vendedor/rifero: banca_id es obligatorio
+    // 3. Vendedor/rifero — banca_id obligatorio
     if (!banca_id) {
       return res.status(400).json({ error: 'Configuración de banca no encontrada' });
     }
 
-    // 4. Verificar que el usuario tiene acceso a esta banca
-    const acceso = await query(
-      `SELECT 1 FROM usuarios_bancas WHERE usuario_id = $1 AND banca_id = $2 LIMIT 1`,
-      [usuario.id, banca_id]
+    // 4. Obtener banca
+    const bancaRes = await query(
+      `SELECT id, nombre, nombre_ticket, rifero_id FROM bancas WHERE id = $1 AND activa = true`,
+      [banca_id]
     );
-    if (!acceso.rows.length) {
+    if (!bancaRes.rows.length) {
+      return res.status(403).json({ error: 'Banca no encontrada o inactiva' });
+    }
+    const banca = bancaRes.rows[0];
+
+    // 5. Verificar acceso según rol
+    let tieneAcceso = false;
+
+    if (usuario.rol === 'rifero') {
+      // Rifero: accede si es el rifero por defecto de la banca
+      // O si está asignado en usuarios_bancas
+      tieneAcceso = banca.rifero_id === usuario.id;
+      if (!tieneAcceso) {
+        const asig = await query(
+          `SELECT 1 FROM usuarios_bancas WHERE usuario_id = $1 AND banca_id = $2 LIMIT 1`,
+          [usuario.id, banca_id]
+        );
+        tieneAcceso = asig.rows.length > 0;
+      }
+    } else if (usuario.rol === 'vendedor') {
+      // Vendedor: debe estar asignado explícitamente
+      const asig = await query(
+        `SELECT 1 FROM usuarios_bancas WHERE usuario_id = $1 AND banca_id = $2 LIMIT 1`,
+        [usuario.id, banca_id]
+      );
+      tieneAcceso = asig.rows.length > 0;
+    }
+
+    if (!tieneAcceso) {
       return res.status(403).json({ error: 'No tienes acceso a esta banca' });
     }
 
-    // 5. Obtener nombre de la banca
-    const bancaRes = await query(
-      `SELECT nombre, nombre_ticket FROM bancas WHERE id = $1`,
-      [banca_id]
-    );
-    const banca = bancaRes.rows[0];
-
     const payload = {
-      id:       usuario.id,
-      username: usuario.username,
-      nombre:   usuario.nombre,
-      rol:      usuario.rol,
-      banca_id: banca_id,
+      id: usuario.id, username: usuario.username,
+      nombre: usuario.nombre, rol: usuario.rol, banca_id,
     };
 
-    const token = jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN || '8h',
-    });
+    const token = jwt.sign(payload, process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '8h' });
 
     res.json({
       token,
       usuario: {
         ...payload,
-        banca_nombre:        banca?.nombre        ?? '',
-        banca_nombre_ticket: banca?.nombre_ticket ?? '',
+        banca_nombre:        banca.nombre        ?? '',
+        banca_nombre_ticket: banca.nombre_ticket ?? '',
       },
     });
 
