@@ -14,11 +14,6 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
   }
 
-  // banca_id es obligatorio — viene del SetupPage guardado en SharedPreferences
-  if (!banca_id) {
-    return res.status(400).json({ error: 'Configuración de banca no encontrada' });
-  }
-
   try {
     // 1. Buscar usuario
     const result = await query(
@@ -41,21 +36,36 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
-    // 2. Verificar que el usuario tiene acceso a esta banca específica
-    //    Admin y central pueden entrar a cualquier banca
-    if (!['admin', 'central'].includes(usuario.rol)) {
-      const acceso = await query(
-        `SELECT 1 FROM usuarios_bancas WHERE usuario_id = $1 AND banca_id = $2 LIMIT 1`,
-        [usuario.id, banca_id]
-      );
-      if (!acceso.rows.length) {
-        return res.status(403).json({
-          error: 'No tienes acceso a esta banca'
-        });
-      }
+    // 2. Admin y central: no necesitan banca_id
+    if (['admin', 'central'].includes(usuario.rol)) {
+      const payload = {
+        id:       usuario.id,
+        username: usuario.username,
+        nombre:   usuario.nombre,
+        rol:      usuario.rol,
+        banca_id: null,
+      };
+      const token = jwt.sign(payload, process.env.JWT_SECRET, {
+        expiresIn: process.env.JWT_EXPIRES_IN || '8h',
+      });
+      return res.json({ token, usuario: payload });
     }
 
-    // 3. Obtener nombre de la banca
+    // 3. Vendedor/rifero: banca_id es obligatorio
+    if (!banca_id) {
+      return res.status(400).json({ error: 'Configuración de banca no encontrada' });
+    }
+
+    // 4. Verificar que el usuario tiene acceso a esta banca
+    const acceso = await query(
+      `SELECT 1 FROM usuarios_bancas WHERE usuario_id = $1 AND banca_id = $2 LIMIT 1`,
+      [usuario.id, banca_id]
+    );
+    if (!acceso.rows.length) {
+      return res.status(403).json({ error: 'No tienes acceso a esta banca' });
+    }
+
+    // 5. Obtener nombre de la banca
     const bancaRes = await query(
       `SELECT nombre, nombre_ticket FROM bancas WHERE id = $1`,
       [banca_id]
@@ -78,7 +88,7 @@ router.post('/login', async (req, res) => {
       token,
       usuario: {
         ...payload,
-        banca_nombre: banca?.nombre ?? '',
+        banca_nombre:        banca?.nombre        ?? '',
         banca_nombre_ticket: banca?.nombre_ticket ?? '',
       },
     });
