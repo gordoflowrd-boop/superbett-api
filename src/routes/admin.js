@@ -5,9 +5,9 @@ const { authMiddleware, requireRol } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Middleware de seguridad: Solo admins y usuarios de central
+// Middleware de seguridad: admin, central y técnico
 router.use(authMiddleware);
-router.use(requireRol('admin', 'central'));
+router.use(requireRol('admin', 'central', 'tecnico'));
 
 // =============================================
 // 1. GESTIÓN DE USUARIOS
@@ -508,6 +508,40 @@ router.put('/esquemas/pagos/:id/detalle', async (req, res) => {
   } catch (err) {
     console.error('Error al guardar multiplicador:', err);
     res.status(500).json({ error: 'Error al guardar multiplicador' });
+  }
+});
+
+// =============================================
+// DESCARGAS
+// =============================================
+
+// GET /api/admin/descargas — todos los roles
+router.get('/descargas', async (req, res) => {
+  try {
+    const result = await query(`SELECT * FROM descargas ORDER BY clave`);
+    res.json({ descargas: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/descargas/:clave — solo admin actualiza
+router.put('/descargas/:clave', async (req, res) => {
+  if (req.usuario?.rol !== 'admin') {
+    return res.status(403).json({ error: 'Solo el admin puede actualizar descargas' });
+  }
+  const { url, version, notas } = req.body;
+  try {
+    await query(
+      `INSERT INTO descargas (clave, url, version, notas, updated_at)
+       VALUES ($1, $2, $3, $4, now())
+       ON CONFLICT (clave) DO UPDATE
+         SET url = $2, version = $3, notas = $4, updated_at = now()`,
+      [req.params.clave, url, version, notas]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
