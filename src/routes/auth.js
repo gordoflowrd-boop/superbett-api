@@ -6,7 +6,6 @@ const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
-// POST /api/auth/login
 router.post('/login', async (req, res) => {
   const { username, password, banca_id } = req.body;
 
@@ -15,7 +14,6 @@ router.post('/login', async (req, res) => {
   }
 
   try {
-    // 1. Buscar usuario
     const result = await query(
       `SELECT id, username, password, nombre, rol, activo FROM usuarios WHERE username = $1`,
       [username.trim().toLowerCase()]
@@ -28,7 +26,7 @@ router.post('/login', async (req, res) => {
     const passwordOk = await bcrypt.compare(password, usuario.password);
     if (!passwordOk) return res.status(401).json({ error: 'Credenciales inválidas' });
 
-    // 2. Admin y central — no necesitan banca
+    // ── Admin y central: sin banca ──────────────────
     if (['admin', 'central'].includes(usuario.rol)) {
       const payload = {
         id: usuario.id, username: usuario.username,
@@ -39,12 +37,17 @@ router.post('/login', async (req, res) => {
       return res.json({ token, usuario: payload });
     }
 
-    // 3. Vendedor/rifero — banca_id obligatorio
+    // ── Rifero: entra al panel admin, no al POS ─────
+    if (usuario.rol === 'rifero') {
+      return res.status(403).json({ error: 'Los riferos acceden al panel admin' });
+    }
+
+    // ── Vendedor: necesita banca_id ─────────────────
     if (!banca_id) {
       return res.status(400).json({ error: 'Configuración de banca no encontrada' });
     }
 
-    // 4. Obtener banca
+    // Obtener banca con su rifero
     const bancaRes = await query(
       `SELECT id, nombre, nombre_ticket, rifero_id FROM bancas WHERE id = $1 AND activa = true`,
       [banca_id]
@@ -54,30 +57,17 @@ router.post('/login', async (req, res) => {
     }
     const banca = bancaRes.rows[0];
 
-    // 5. Verificar acceso según rol
-    let tieneAcceso = false;
-
-    if (usuario.rol === 'rifero') {
-      // Rifero: accede si es el rifero por defecto de la banca
-      // O si está asignado en usuarios_bancas
-      tieneAcceso = banca.rifero_id === usuario.id;
-      if (!tieneAcceso) {
-        const asig = await query(
-          `SELECT 1 FROM usuarios_bancas WHERE usuario_id = $1 AND banca_id = $2 LIMIT 1`,
-          [usuario.id, banca_id]
-        );
-        tieneAcceso = asig.rows.length > 0;
-      }
-    } else if (usuario.rol === 'vendedor') {
-      // Vendedor: debe estar asignado explícitamente
-      const asig = await query(
-        `SELECT 1 FROM usuarios_bancas WHERE usuario_id = $1 AND banca_id = $2 LIMIT 1`,
-        [usuario.id, banca_id]
-      );
-      tieneAcceso = asig.rows.length > 0;
+    if (!banca.rifero_id) {
+      return res.status(403).json({ error: 'Esta banca no tiene rifero asignado' });
     }
 
-    if (!tieneAcceso) {
+    // Verificar que el vendedor pertenece al rifero de esta banca
+    const acceso = await query(
+      `SELECT 1 FROM usuarios_riferos
+       WHERE usuario_id = $1 AND rifero_id = $2 LIMIT 1`,
+      [usuario.id, banca.rifero_id]
+    );
+    if (!acceso.rows.length) {
       return res.status(403).json({ error: 'No tienes acceso a esta banca' });
     }
 
@@ -104,7 +94,6 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// GET /api/auth/me
 router.get('/me', authMiddleware, (req, res) => {
   res.json({ usuario: req.usuario });
 });
