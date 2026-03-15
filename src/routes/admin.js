@@ -171,6 +171,23 @@ router.get('/bancas', async (req, res) => {
   }
 });
 
+// GET /api/admin/riferos/:id/vendedores — vendedores asignados a un rifero
+router.get('/riferos/:id/vendedores', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT u.id, u.username, u.nombre, u.activo
+       FROM usuarios_riferos ur
+       JOIN usuarios u ON u.id = ur.usuario_id
+       WHERE ur.rifero_id = $1
+       ORDER BY u.username`,
+      [req.params.id]
+    );
+    res.json({ vendedores: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener vendedores del rifero' });
+  }
+});
+
 // GET /api/admin/riferos — lista usuarios con rol rifero para selector
 router.get('/riferos', async (req, res) => {
   try {
