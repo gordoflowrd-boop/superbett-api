@@ -105,6 +105,51 @@ router.post('/usuarios/:id/bancas', async (req, res) => {
   }
 });
 
+// GET /api/admin/usuarios/:id/riferos — riferos asignados a un vendedor
+router.get('/usuarios/:id/riferos', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT u.id, u.username, u.nombre
+       FROM usuarios_riferos ur
+       JOIN usuarios u ON u.id = ur.rifero_id
+       WHERE ur.usuario_id = $1 ORDER BY u.username`,
+      [req.params.id]
+    );
+    res.json({ riferos: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener riferos del vendedor' });
+  }
+});
+
+// POST /api/admin/usuarios/:id/riferos — asignar vendedor a rifero
+router.post('/usuarios/:id/riferos', async (req, res) => {
+  const { rifero_id } = req.body;
+  if (!rifero_id) return res.status(400).json({ error: 'rifero_id requerido' });
+  try {
+    await query(
+      `INSERT INTO usuarios_riferos (usuario_id, rifero_id)
+       VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [req.params.id, rifero_id]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al asignar rifero' });
+  }
+});
+
+// DELETE /api/admin/usuarios/:id/riferos/:rifero_id — quitar rifero de vendedor
+router.delete('/usuarios/:id/riferos/:rifero_id', async (req, res) => {
+  try {
+    await query(
+      `DELETE FROM usuarios_riferos WHERE usuario_id = $1 AND rifero_id = $2`,
+      [req.params.id, req.params.rifero_id]
+    );
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al quitar rifero' });
+  }
+});
+
 // =============================================
 // 2. GESTIÓN DE BANCAS
 // =============================================
