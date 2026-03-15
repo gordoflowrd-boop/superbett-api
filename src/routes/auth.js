@@ -26,8 +26,8 @@ router.post('/login', async (req, res) => {
     const passwordOk = await bcrypt.compare(password, usuario.password);
     if (!passwordOk) return res.status(401).json({ error: 'Credenciales inválidas' });
 
-    // ── Admin y central: sin banca ──────────────────
-    if (['admin', 'central'].includes(usuario.rol)) {
+    // ── Admin, central y técnico: sin banca ────────
+    if (['admin', 'central', 'tecnico'].includes(usuario.rol)) {
       const payload = {
         id: usuario.id, username: usuario.username,
         nombre: usuario.nombre, rol: usuario.rol, banca_id: null,
