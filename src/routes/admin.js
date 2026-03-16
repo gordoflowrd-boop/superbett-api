@@ -105,6 +105,44 @@ router.post('/usuarios/:id/bancas', async (req, res) => {
   }
 });
 
+// =============================================
+// PERMISOS DE PÁGINAS
+// =============================================
+
+// GET /api/admin/usuarios/:id/paginas
+router.get('/usuarios/:id/paginas', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT pagina FROM permisos_paginas WHERE usuario_id = $1 ORDER BY pagina`,
+      [req.params.id]
+    );
+    res.json({ paginas: result.rows.map(r => r.pagina) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/usuarios/:id/paginas — reemplaza todos los permisos
+router.put('/usuarios/:id/paginas', async (req, res) => {
+  const { paginas } = req.body; // array de strings
+  if (!Array.isArray(paginas)) {
+    return res.status(400).json({ error: 'paginas debe ser un array' });
+  }
+  try {
+    // Borrar todos y reemplazar
+    await query(`DELETE FROM permisos_paginas WHERE usuario_id = $1`, [req.params.id]);
+    for (const pagina of paginas) {
+      await query(
+        `INSERT INTO permisos_paginas (usuario_id, pagina) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [req.params.id, pagina]
+      );
+    }
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/admin/usuarios/:id/riferos — riferos asignados a un vendedor
 router.get('/usuarios/:id/riferos', async (req, res) => {
   try {
