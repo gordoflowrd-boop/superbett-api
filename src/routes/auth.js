@@ -26,20 +26,49 @@ router.post('/login', async (req, res) => {
     const passwordOk = await bcrypt.compare(password, usuario.password);
     if (!passwordOk) return res.status(401).json({ error: 'Credenciales inválidas' });
 
-    // ── Admin, central y técnico: sin banca ────────
-    if (['admin', 'central', 'tecnico'].includes(usuario.rol)) {
+    // ── Admin, central, rifero y técnico: sin banca ─
+    if (['admin', 'central', 'tecnico', 'rifero'].includes(usuario.rol)) {
+      // Obtener páginas según rol
+      let paginas = [];
+
+      if (usuario.rol === 'admin') {
+        // Admin ve todo — no necesita tabla
+        paginas = ['dashboard','bancas','venta','premios','reportes',
+                   'riferos','usuarios','mensajes','limites','configuracion',
+                   'contabilidad','descargas'];
+      } else if (usuario.rol === 'tecnico') {
+        // Técnico — fijo, solo estas 3
+        paginas = ['dashboard','bancas','descargas'];
+      } else {
+        // Central y rifero — leer de permisos_paginas, con defaults
+        const permRes = await query(
+          `SELECT pagina FROM permisos_paginas WHERE usuario_id = $1`,
+          [usuario.id]
+        );
+        if (permRes.rows.length > 0) {
+          paginas = permRes.rows.map(r => r.pagina);
+        } else {
+          // Defaults si no tiene permisos configurados
+          if (usuario.rol === 'central') {
+            paginas = ['dashboard','bancas','venta','premios','reportes',
+                       'usuarios','mensajes','limites','configuracion','descargas'];
+          } else if (usuario.rol === 'rifero') {
+            paginas = ['dashboard','bancas','premios','reportes','mensajes','descargas'];
+          }
+        }
+        // Dashboard y descargas siempre visibles
+        if (!paginas.includes('dashboard')) paginas.unshift('dashboard');
+        if (!paginas.includes('descargas')) paginas.push('descargas');
+      }
+
       const payload = {
         id: usuario.id, username: usuario.username,
-        nombre: usuario.nombre, rol: usuario.rol, banca_id: null,
+        nombre: usuario.nombre, rol: usuario.rol,
+        banca_id: null, paginas,
       };
       const token = jwt.sign(payload, process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_EXPIRES_IN || '8h' });
       return res.json({ token, usuario: payload });
-    }
-
-    // ── Rifero: entra al panel admin, no al POS ─────
-    if (usuario.rol === 'rifero') {
-      return res.status(403).json({ error: 'Los riferos acceden al panel admin' });
     }
 
     // ── Vendedor: necesita banca_id ─────────────────
