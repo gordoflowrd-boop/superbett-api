@@ -3,16 +3,27 @@ const { query } = require('../db');
 
 const router = express.Router();
 
-// =============================================
-// CONFIGURACIÓN POR BANCA — PÚBLICO (sin JWT)
-// Autenticación: codigo + ip_config
-// GET /api/config/:codigo?ip=192.168.1.10
-// =============================================
+// GET /api/config/central — público, devuelve nombre y mensaje_login
+router.get('/central', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT clave, valor FROM central_config WHERE clave IN ('nombre_central','mensaje_login')`
+    );
+    const config = {};
+    result.rows.forEach(r => { config[r.clave] = r.valor ?? ''; });
+    if (!config.nombre_central) config.nombre_central = 'SuperBett';
+    if (!config.mensaje_login)  config.mensaje_login  = '';
+    res.json({ config });
+  } catch (err) {
+    // Si la tabla no existe aún, devolver defaults
+    res.json({ config: { nombre_central: 'SuperBett', mensaje_login: '' } });
+  }
+});
 
+// GET /api/config/:codigo?ip=192.168.1.10 — público, validación banca
 router.get('/:codigo', async (req, res) => {
   const codigo = req.params.codigo.trim().toUpperCase();
 
-  // IP: primero del query param, luego del header (proxy), luego socket
   const ip = (
     req.query.ip ||
     req.headers['x-forwarded-for']?.split(',')[0] ||
@@ -43,28 +54,24 @@ router.get('/:codigo', async (req, res) => {
       [codigo]
     );
 
-    // Banca no existe
     if (!r.rows.length) {
       return res.status(404).json({ error: 'Banca no encontrada' });
     }
 
     const banca = r.rows[0];
 
-    // IP no configurada en la banca
     if (!banca.ip_config) {
       return res.status(403).json({
         error: 'Esta banca no tiene IP configurada. Contacte al administrador.'
       });
     }
 
-    // IP no coincide
     if (banca.ip_config.trim() !== ip) {
       return res.status(403).json({
         error: 'IP no autorizada para esta banca.'
       });
     }
 
-    // Todo OK — devolver config completa (sin ip_config por seguridad)
     const { ip_config, ...config } = banca;
 
     res.json({
