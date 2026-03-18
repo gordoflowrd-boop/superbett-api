@@ -583,4 +583,48 @@ router.put('/descargas/:clave', async (req, res) => {
   }
 });
 
+// =============================================
+// CONFIGURACIÓN CENTRAL
+// =============================================
+
+// GET /api/admin/central-config — todos los roles
+router.get('/central-config', async (req, res) => {
+  try {
+    const result = await query(`SELECT clave, valor FROM central_config`);
+    const config = {};
+    result.rows.forEach(r => { config[r.clave] = r.valor ?? ''; });
+    // Defaults si no existen
+    if (!config.nombre_central) config.nombre_central = 'SuperBett';
+    if (!config.mensaje_login)  config.mensaje_login  = '';
+    if (!config.ticket_header)  config.ticket_header  = '';
+    if (!config.ticket_footer)  config.ticket_footer  = '';
+    res.json({ estado: 'ok', config });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/central-config — solo admin
+router.put('/central-config', async (req, res) => {
+  if (req.usuario?.rol !== 'admin') {
+    return res.status(403).json({ error: 'Solo el admin puede actualizar la configuración central' });
+  }
+  const claves = ['nombre_central', 'mensaje_login', 'ticket_header', 'ticket_footer'];
+  try {
+    for (const clave of claves) {
+      if (req.body[clave] !== undefined) {
+        await query(
+          `INSERT INTO central_config (clave, valor, updated_at)
+           VALUES ($1, $2, now())
+           ON CONFLICT (clave) DO UPDATE SET valor = $2, updated_at = now()`,
+          [clave, req.body[clave]]
+        );
+      }
+    }
+    res.json({ estado: 'ok' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
